@@ -90,3 +90,34 @@ Per-view settings for the re-release's software-rendered backgrounds:
 `white_plants` and `review`. The port does not apply them. Their camera changes
 are large (zoom 790 → 685 on E1 view 3, positions moved by hundreds of units),
 so using them for actors would misplace them on the original pre-rendered art.
+
+## The Software background (how the re-release draws the world)
+
+`background_type` in `settings.json` is 0 = Software, 1 = Classic HIGH,
+2 = Classic LOW. Software is a real 3D render at any aspect and resolution
+(`background_pixel_budget`), rebuilt from data the original games already
+carry. What is established so far, from `Ecstatica II.exe`:
+
+- **Blocks.** `MapAccelEnsure` (inside `sub_1401189A0`) voxelises the map:
+  each cell becomes 8 triangular columns of 256 height levels, each level
+  holding the element that fills it (`height2 + 1` .. `def_height`).
+  `block_config` maps to the triangles through an 8-bit mask table at
+  `0x140339040`: 1 = all 8, 2-5 = 4 (diagonal halves), 16 + quarter mask = 2
+  per quarter. Material 8 is skipped.
+- **Roofs.** Map elements with a code in their extra word (version >= 10)
+  run that code. Those codes are one-line `DrawRoof a b c d e` scripts in
+  the original databases (E1 22, E2 9; names such as `shop_roof`,
+  `tavern_roof`). Token 21 collects the five values as roof parameters;
+  `sub_14013A1E0` builds a thatched slope from them as rows of jittered
+  ellipsoids: `a` is a direction in 45 degree steps, `b`/`c` offsets from
+  the element, `d` the number of rows, `e` the width (x 64 units).
+- **Props.** `DrawScene "name"` (token 20; E1 65, E2 577) names scenes whose
+  objects stand in the world.
+- **E2 faces.** The seven words per E2 element are texture slots into the
+  database's texture names (`FLOOR`, `WALLS`, `CARPET`, `WOOD1`-`3`,
+  `BRICK1`, `FLAG1`-`6`, `STONE1`...), whose images are `Code/Textures`.
+- **Surfaces.** `Graphics/bumpmap*.raw` (128x128) texture the materials;
+  `antialia.dat` and the `ErPalLut` LUTs blend in palette space.
+
+Not yet traced: grass, plants and trees (`GRASS1`, `cull_trees`,
+`white_plants`) and the per-material surface rules.
