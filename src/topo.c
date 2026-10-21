@@ -637,6 +637,42 @@ static void raw_read(raw_src_t *src, void *dst, size_t n) {
     src->left -= k;
 }
 
+/* Widescreen: the original 640x480 view goes in the middle of the wider
+ * plane, and the columns either side come from the re-release's wide view of
+ * the same camera, scaled back up by 3/2. Its depth is in mask_map units, so
+ * actors stay hidden behind the scenery out there too. Where the wide view has
+ * nothing (no file, or a narrower one) the sides are black and hide nothing. */
+void widen_background(const char *img, const int16_t *mask) {
+    static uint8_t side_img[640 * 320];
+    static uint16_t side_depth[640 * 320];
+    int side_w = file_read_wide_view(selected_camera, side_img, side_depth);
+
+    int w = screen_width;
+    int left = (w - 640) / 2;
+    for (int y = 0; y < 480; y++) {
+        char *row = bitmap[3] + y * w;
+        int16_t *mrow = mask_map[2] + y * w;
+        memcpy(row + left, img + y * 640, 640);
+        memcpy(mrow + left, mask + y * 640, 640 * sizeof(int16_t));
+
+        const uint8_t *srow = side_img + (y * 2 / 3) * side_w;
+        const uint16_t *drow = side_depth + (y * 2 / 3) * side_w;
+        for (int x = 0; x < w; x++) {
+            if (x == left) x += 640;
+            if (x >= w) break;
+            /* Narrower wide views are centred too. */
+            int sx = ((x - w / 2) * 2 + 3 * side_w / 2) / 3;
+            if (sx < 0 || sx >= side_w) {
+                row[x] = 0;
+                mrow[x] = 0x7FFC;
+                continue;
+            }
+            row[x] = (char)srow[sx];
+            mrow[x] = drow[sx] > 0x7FFC ? 0x7FFC : (int16_t)drow[sx];
+        }
+    }
+}
+
 int load_raw(void) {
     if (selected_camera < 0) {
         do_info_req("Can't load negative camera");
@@ -686,12 +722,25 @@ int load_raw(void) {
     int16_t signature = 0;
     raw_read(&src, &signature, 2);
 
+    /* The files are 640 wide; a wide screen unpacks them aside first. */
+    static char *wide_img = NULL;
+    static int16_t *wide_mask = NULL;
+    int widen = mode_svga && screen_width != 640;
+    if (widen && !wide_img) {
+        wide_img = (char *)malloc(640 * 480);
+        wide_mask = (int16_t *)malloc(640 * 480 * sizeof(int16_t));
+        if (!wide_img || !wide_mask) quit("not enough memory for the wide view");
+    }
+    char *img_dst = widen ? wide_img : bitmap[3];
+    int16_t *mask_dst = widen ? wide_mask : mask_map[2];
+    int raw_w = widen ? 640 : screen_width;
+
     if (signature == 0x686D) {
         PROF_END(PROF_RAWREAD);
-        raw_read(&src, bitmap[3], 0x1E);
-        raw_read(&src, bitmap[3], 0x300);
-        raw_read(&src, bitmap[3], screen_height * screen_width);
-        raw_read(&src, mask_map[2], 2 * screen_height * screen_width);
+        raw_read(&src, img_dst, 0x1E);
+        raw_read(&src, img_dst, 0x300);
+        raw_read(&src, img_dst, screen_height * raw_w);
+        raw_read(&src, mask_dst, 2 * screen_height * raw_w);
     } else {
         int bg_size = 0, hmap_size = 0;
         raw_read(&src, &bg_size, 4);
@@ -708,12 +757,13 @@ int load_raw(void) {
             raw_read(&src, mask_map[0], hmap_size + bg_size);
         PROF_END(PROF_RAWREAD);
         PROF_BEGIN(PROF_UNPACK);
-        unpack_bitmap(bitmap[3], (char *)packed);
-        unpack_mask(mask_map[2], (char *)packed + bg_size);
+        unpack_bitmap(img_dst, (char *)packed);
+        unpack_mask(mask_dst, (char *)packed + bg_size);
         PROF_END(PROF_UNPACK);
     }
 
     if (stream) fclose(stream);
+    if (widen) widen_background(wide_img, wide_mask);
 
     PROF_BEGIN(PROF_VISMAP);
     load_visibility_map();
@@ -779,7 +829,22 @@ void load_palette(const char *filename) {
             snprintf(destination, sizeof(destination), "VIEWS/%04d.PAL", selected_camera);
 
         FILE *stream = fopen_ci(destination, "rb");
-        if (!stream) {
+        int loaded = 0;
+        if (stream) {
+            fread_ignore(&view_cmap, 1, 2, stream);
+            fread_ignore(&palette_control, 1, 24, stream);
+            fread_ignore(&view_cmap, 1, 768, stream);
+            fclose(stream);
+            loaded = 1;
+        } else if (remaster_layout &&
+                   file_read_remaster_palette(selected_camera,
+                                              intro_flag && game_version == GAME_VERSION_E2,
+                                              (uint8_t *)view_cmap)) {
+            memset(palette_control, 0, sizeof(palette_control));
+            loaded = 1;
+        }
+
+        if (!loaded) {
             memset(palette_control, 0, sizeof(palette_control));
             for (int i = 0; i < 256; ++i) {
                 view_cmap[i].R = fade_cmap[i].R = colour_map[i].R;
@@ -787,11 +852,6 @@ void load_palette(const char *filename) {
                 view_cmap[i].B = fade_cmap[i].B = colour_map[i].B;
             }
         } else {
-            fread_ignore(&view_cmap, 1, 2, stream);
-            fread_ignore(&palette_control, 1, 24, stream);
-            fread_ignore(&view_cmap, 1, 768, stream);
-            fclose(stream);
-
             if (selected_camera) {
                 for (int i = 8; i < 16; ++i) {
                     view_cmap[i].R = colour_map[i].R;
@@ -859,7 +919,9 @@ void load_visibility_map(void) {
     FILE *vis_fp = NULL;
     uint16_t vis_count = 0;
 
-    if (game_version == GAME_VERSION_E1) {
+    /* E2 keeps visibility in FILES/ECSTATIC; the re-release ships loose
+     * .vis files for both games. */
+    if (game_version == GAME_VERSION_E1 || !load_by_offset) {
         char vis_path[64];
         snprintf(vis_path, sizeof(vis_path), "VISIB/%04d.VIS", selected_camera);
         vis_fp = fopen_ci(vis_path, "rb");
@@ -886,8 +948,6 @@ void load_visibility_map(void) {
         }
         fclose(vis_fp);
     } else {
-        if (!load_by_offset) return;
-
         int vis_data_offset = visib_offset[selected_camera];
         if (vis_data_offset < 0) return;
 

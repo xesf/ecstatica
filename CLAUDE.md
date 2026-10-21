@@ -50,7 +50,7 @@ rendered by FluidSynth. `libfluidsynth` is `dlopen`'d at runtime, not linked —
 it is not a build dependency, and without it the game runs with music silent
 (SFX and speech are unaffected, they go through the ALSA mixer). Needs a GM
 soundfont; searched in order: `$ECSTATICA_SOUNDFONT`, game data dir,
-`~/.local/share/soundfonts`, `/usr/share/soundfonts`, `/usr/share/sounds/sf2`.
+the re-release's `Audio/Music/Instruments`, `~/.local/share/soundfonts`, `/usr/share/soundfonts`, `/usr/share/sounds/sf2`.
 On Arch/SteamOS: `pacman -S fluidsynth soundfont-fluid`.
 
 **Web:** `platforms/web/` is a CMake project for Emscripten (`make web`,
@@ -130,7 +130,7 @@ src/
   platforms/web.c    — Emscripten backend (PROXY_TO_PTHREAD, WASMFS/OPFS, Web Audio)
   platforms/android.c — NDK NativeActivity backend (ANativeWindow, AAudio)
   platforms/ios.m    — UIKit backend (game thread, CADisplayLink, RemoteIO)
-  platforms/third_party/ — vendored tsf.h / tml.h (TinySoundFont, MIT)
+  platforms/third_party/ — vendored tsf.h / tml.h (TinySoundFont, MIT), zstddeclib.c (zstd decoder, BSD)
   platforms/macos.m  — Cocoa NSView framebuffer, input, timing
   platforms/linux.c  — X11/GLX, ALSA, FluidSynth music
   platforms/windows.c — Win32 (also Win9x via the root platforms/win9x/ Open Watcom build)
@@ -207,6 +207,26 @@ Game data lives in `data/` (not committed):
 - `data/e1/` — Ecstatica 1 bundled DOS version (320x200)
 - `data/e1-dos/` — Ecstatica 1 original DOS release (320x200)
 - `data/e2/` — Ecstatica 2 Win95 (640x480) + DOS (320x200)
+- `data/Ecstatica Demo/`, `data/Ecstatica II Demo/` — modern re-release demos
+
+The re-release keeps the original files in a new tree: loose `.fan` files under
+`Code/` (no `OFFSETS`/`FILES/`, E2 actions split per animator with `dir`
+indexes), `Views/Win95|DOS|Visibility`, `Graphics/`, `Text/<language>/Titles`.
+`detect_game_version` sets `remaster_layout` and `fopen_ci` maps the original
+paths onto it (`remaster_paths` in `file.c`). Sounds load from
+`Audio/Voice|Sounds/*.wav`, tunes from `Audio/Music/Tunes/MIDI/*.mid`, E2
+palettes from `Views/ErPalLut`. Its scripts use two new tokens,
+`CT_PLAY_SCENE_AFTER_VOICE` and `CT_SKIP_KEY_PRESSED`. Formats:
+`docs/formats/remaster-files.md`.
+
+**Widescreen** (desktop and Vita builds, `ECS_WIDESCREEN`; on by default): with the re-release's
+`Views/Fallback` wide views, the 640x480 mode can run at `WIDE_SCREEN_WIDTH`
+(854, 16:9). `widen_background()` (topo.c) puts the original view in the middle
+and fills the sides from the wide view and its depth; `wide_margin()` and
+`read_screen_image()` (icon.c) keep 640-wide art and HUD placed. Turned off
+with `widescreen = 0` in `ecstatica.cfg`, the Enhanced menu's Aspect Ratio row,
+or `ECSTATICA_WIDESCREEN=0`. Original-release data always runs 4:3. The zstd decoder is vendored as
+`platforms/third_party/zstddeclib.c` (zstd 1.5.6, BSD).
 
 `.FAN` archives contain game resources (actors, graphics, scripts).
 

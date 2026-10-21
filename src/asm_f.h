@@ -42,6 +42,34 @@ extern int32_t enhanced_graphics;
 void init_data_roots(void);
 int hires_data_available(void);
 
+/* Set by detect_game_version when the data is the re-release tree (Code/,
+ * Views/, Graphics/, Text/). fopen_ci and file_list_dir then map the original
+ * paths onto it. */
+extern int remaster_layout;
+
+/* Path of the per-file action named `name`, looked up in the action
+ * directories' dir indexes (ACTIONS/dir, and ACTIONS/<animator>/dir in E2).
+ * Returns 0 when no listed file exists. */
+int file_find_action_file(const char *name, char *path, size_t pathsz);
+
+/* Camera palette from the re-release's Views/ErPalLut, which replaces the
+ * palettes E2 kept in FILES/ECSTATIC (`intro` picks the .PA2 set). Writes 768
+ * bytes of 0..63 RGB. Returns 0 when the file or the camera is missing. */
+int file_read_remaster_palette(int camera, int intro, uint8_t out[768]);
+
+/* Loads sound `sound_index` from the re-release's WAV files into sound_tab.
+ * Returns 0 when there is no usable file. */
+int file_load_remaster_sound(int16_t sound_index);
+
+/* True when the data carries the re-release's wide views (Views/Fallback). */
+int file_wide_views_available(void);
+
+/* The re-release's wide view of `camera`: the same camera at 2/3 scale, 320
+ * rows and up to 640 columns centred on the original view (2:1). Palette
+ * indices, and depth in mask_map units with 0xFFFF for sky. Returns the width,
+ * or 0 when the build has no zstd or the file is missing. */
+int file_read_wide_view(int camera, uint8_t img[640 * 320], uint16_t depth[640 * 320]);
+
 /* Prefix prepended to every relative asset path. Platforms without a
  * per-process working directory (openfpgaOS) set it to their data mount
  * before any asset load; desktop builds leave it empty. */

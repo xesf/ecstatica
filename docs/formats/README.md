@@ -23,6 +23,7 @@ Endianness in this codebase is inconsistent — many multi-byte fields are big-e
 | [packed-background.md](packed-background.md) | `hires/NNNN.raw` | Camera background: signature branch + packed 8-bpp bitmap + packed 16-bpp heightmap via `unpack_bitmap` / `unpack_mask` |
 | [palette-files.md](palette-files.md) | `views/NNNN.pal`, `views/NNNN.pa2` | Per-camera VGA palette + control block |
 | [offsets.md](offsets.md) | `OFFSETS`, `OFF2` | Big-endian offset tables into merged `.FAN` blob for lazy resource loading |
+| [remaster-files.md](remaster-files.md) | `Views/ErPalLut`, `Views/Fallback/NNNN` | Re-release camera palettes, wide re-rendered views, new script tokens |
 | [shademap.md](shademap.md) | `shademap.dat` | 128×128 ellipsoid shade+profile table used by ellipse rasterizer |
 | [shadow-tab.md](shadow-tab.md) | `SHADOW.DAT` | 3×16×256 shadow palette lookup, raw dump |
 | [sound-block.md](sound-block.md) | Sound blocks inside `.FAN` | 32-byte header + unsigned 8-bit PCM sample |

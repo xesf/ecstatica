@@ -12,6 +12,7 @@
 #include "edit.h"
 #include "ellipse.h"
 #include "game.h"
+#include "icon.h"
 #include "init.h"
 #include "map.h"
 #include "menu.h"
@@ -81,6 +82,27 @@ static const char *swappable_dirs[] = {
      * DOS ships only TITLE_S.RAW (320x200), Win95 only TSCREEN.RAW
      * (640x480), so load_background_title needs to see across both. */
     "TITLE_S.RAW", "TSCREEN.RAW"
+};
+
+/* The modern re-release ships the same files in a new tree: the database split
+ * into loose .fan files under Code/ (no OFFSETS, no FILES/), the views under
+ * Views/, root-level art under Graphics/, title and ending art per language
+ * under Text/. The engine keeps asking for the original paths and
+ * remaster_paths() lists where each one lives now. */
+int remaster_layout = 0;
+
+static const struct { const char *from; const char *to; } remaster_dirs[] = {
+    { "HIRES", "Views/Win95" },      { "VIEWS", "Views/DOS" },
+    { "VISIB", "Views/Visibility" }, { "SCENES", "Code/Scenes" },
+    { "ACTORS", "Code/Actors" },     { "REP", "Code/Repertoires" },
+    { "ACTIONS", "Code/Actions" },   { "TEXTURES", "Code/Textures" },
+    { "GRAPHICS", "Graphics/Icons" },
+};
+
+/* Indexed by `language`, in the order of menu.c's language_names. */
+static const char *remaster_languages[] = {
+    "English", "Deutsch", "Fran\xc3\xa7" "ais", "", "Italiano",
+    "Espa\xc3\xb1" "ol", "Polski"
 };
 
 /* Sized to match resolve_ci()'s 512-byte resolved path, which is the
@@ -320,10 +342,77 @@ static FILE *fopen_ci_root(const char *base, const char *path, const char *mode)
     return fopen(resolved, mode);
 }
 
+static const char *remaster_dir(const char *dir) {
+    for (size_t i = 0; i < sizeof(remaster_dirs) / sizeof(remaster_dirs[0]); i++)
+        if (strcasecmp(dir, remaster_dirs[i].from) == 0)
+            return remaster_dirs[i].to;
+    return NULL;
+}
+
+static const char *remaster_language_dir(void) {
+    if (language >= 0 &&
+        language < (int)(sizeof(remaster_languages) / sizeof(remaster_languages[0])) &&
+        remaster_languages[language][0])
+        return remaster_languages[language];
+    return "English";
+}
+
+#define REMASTER_CANDIDATES 4
+
+/* Where an original asset path lives in the re-release tree, most specific
+ * first. Title and ending art falls back to English, which every language
+ * folder's art is derived from. */
+static int remaster_paths(const char *path, char out[REMASTER_CANDIDATES][512]) {
+    char norm[256];
+    snprintf(norm, sizeof(norm), "%s", path);
+    for (char *p = norm; *p; p++)
+        if (*p == '\\') *p = '/';
+
+    char *slash = strchr(norm, '/');
+    if (!slash) {
+        snprintf(out[0], 512, "Graphics/%s", norm);
+        return 1;
+    }
+    *slash = '\0';
+    const char *dir = norm, *rest = slash + 1;
+    const char *lang = remaster_language_dir();
+    int n = 0;
+
+    if (strcasecmp(dir, "LOWGRAPH") == 0) {
+        char stem[256];
+        snprintf(stem, sizeof(stem), "%s", rest);
+        char *dot = strrchr(stem, '.');
+        if (dot) *dot = '\0';
+        snprintf(out[n++], 512, "Text/%s/Titles/%s.low.raw", lang, stem);
+        if (strcmp(lang, "English") != 0)
+            snprintf(out[n++], 512, "Text/English/Titles/%s.low.raw", stem);
+        return n;
+    }
+
+    const char *to = remaster_dir(dir);
+    if (to)
+        snprintf(out[n++], 512, "%s/%s", to, rest);
+    if (strcasecmp(dir, "GRAPHICS") == 0) {
+        snprintf(out[n++], 512, "Text/%s/Titles/%s", lang, rest);
+        if (strcmp(lang, "English") != 0)
+            snprintf(out[n++], 512, "Text/English/Titles/%s", rest);
+    }
+    return n;
+}
+
 /* Case-insensitive fopen: tries exact path first, then scans directory
  * for a case-insensitive filename match. Handles nested subdirectories.
  * Swappable asset directories are searched across both data roots. */
 static FILE *fopen_ci_any(const char *path, const char *mode) {
+    if (remaster_layout && mode && mode[0] == 'r') {
+        char cand[REMASTER_CANDIDATES][512];
+        int n = remaster_paths(path, cand);
+        for (int i = 0; i < n; i++) {
+            FILE *f = fopen_ci_root("", cand[i], mode);
+            if (f) return f;
+        }
+    }
+
     if (is_swappable_asset(path)) {
         /* Consult the root that holds the requested resolution first. */
         int prefer_alt = (enhanced_graphics != 0) == (alt_root_is_enhanced != 0);
@@ -378,6 +467,9 @@ void init_data_roots(void) {
     alt_data_root[0] = '\0';
     alt_root_is_enhanced = 1;
     enhanced_graphics = 0;
+
+    /* Both resolutions sit side by side under Views/. */
+    if (remaster_layout) return;
 
     char resolved[512];
     if (resolve_ci("", "W/CODE/ECSTATIC.FAN", resolved, sizeof(resolved))) {
@@ -436,6 +528,8 @@ int file_asset_roots(const char *roots[2]) {
 int file_list_dir(const char *root, const char *dir, char *path, size_t pathsz,
                   void (*fn)(void *ctx, const char *name), void *ctx) {
     const char *base = (root && root[0]) ? root : data_root;
+    if (remaster_layout && dir && remaster_dir(dir))
+        dir = remaster_dir(dir);
     if (dir && dir[0]) {
         if (!resolve_ci(root, dir, path, pathsz)) return 0;
     } else {
@@ -460,12 +554,274 @@ int file_list_dir(const char *root, const char *dir, char *path, size_t pathsz,
     return 1;
 }
 
+/* Per-file actions are stored by slot number, not by name: each action
+ * directory carries a `dir` index (le16 version, le16 count, count 26-byte
+ * names) and slot i is NNNNNN.fan. E1 keeps one directory; E2 splits them by
+ * animator (ACTIONS/Dave, ACTIONS/Ken, ...), and a name can be listed in more
+ * than one, or listed with no file behind it. */
+#define ACTION_DIRS_MAX 16
+
+typedef struct {
+    char name[26];
+    int16_t slot;
+    uint8_t dir;
+} action_entry_t;
+
+static char action_dir_names[ACTION_DIRS_MAX][64];
+static int action_dir_count;
+static action_entry_t *action_entries;
+static int action_entry_count;
+static int action_index_built;
+
+static void read_action_dir_index(const char *sub) {
+    if (action_dir_count == ACTION_DIRS_MAX) return;
+
+    char path[128];
+    if (sub[0])
+        snprintf(path, sizeof(path), "ACTIONS/%s/dir", sub);
+    else
+        snprintf(path, sizeof(path), "ACTIONS/dir");
+    FILE *f = fopen_ci(path, "rb");
+    /* The DOS release names it "DIR." */
+    if (!f && !sub[0]) f = fopen_ci("ACTIONS/DIR.", "rb");
+    if (!f) return;
+
+    getwLoHi(f);
+    int count = (uint16_t)getwLoHi(f);
+    int dir = action_dir_count++;
+    snprintf(action_dir_names[dir], sizeof(action_dir_names[dir]), "%s", sub);
+
+    action_entry_t *grown = (action_entry_t *)realloc(
+        action_entries, (size_t)(action_entry_count + count) * sizeof(action_entry_t));
+    if (!grown) { fclose(f); return; }
+    action_entries = grown;
+
+    for (int i = 0; i < count; i++) {
+        char name[26];
+        if (fread(name, 1, sizeof(name), f) != sizeof(name)) break;
+        if (!name[0]) continue;
+        action_entry_t *e = &action_entries[action_entry_count++];
+        memcpy(e->name, name, sizeof(name));
+        e->name[sizeof(e->name) - 1] = '\0';
+        e->slot = (int16_t)i;
+        e->dir = (uint8_t)dir;
+    }
+    fclose(f);
+}
+
+typedef struct {
+    char names[ACTION_DIRS_MAX][64];
+    int count;
+} action_subdirs_t;
+
+static void collect_action_subdir(void *ctx, const char *name) {
+    action_subdirs_t *s = (action_subdirs_t *)ctx;
+    if (strchr(name, '.') || strcasecmp(name, "dir") == 0) return;
+    if (s->count == ACTION_DIRS_MAX) return;
+    snprintf(s->names[s->count++], sizeof(s->names[0]), "%s", name);
+}
+
+static int subdir_cmp(const void *a, const void *b) {
+    return strcasecmp((const char *)a, (const char *)b);
+}
+
+static void build_action_index(void) {
+    action_index_built = 1;
+    read_action_dir_index("");
+
+    action_subdirs_t subs;
+    subs.count = 0;
+    char path[512];
+    if (!file_list_dir("", "ACTIONS", path, sizeof(path), collect_action_subdir, &subs))
+        return;
+    /* Listing order is the filesystem's; sort so a name listed by two
+     * animators always resolves to the same one. */
+    qsort(subs.names, subs.count, sizeof(subs.names[0]), subdir_cmp);
+    for (int i = 0; i < subs.count; i++)
+        read_action_dir_index(subs.names[i]);
+}
+
+int file_find_action_file(const char *name, char *path, size_t pathsz) {
+    if (!name || !name[0]) return 0;
+    if (!action_index_built) build_action_index();
+
+    for (int i = 0; i < action_entry_count; i++) {
+        const action_entry_t *e = &action_entries[i];
+        if (strcasecmp(e->name, name) != 0) continue;
+        if (action_dir_names[e->dir][0])
+            snprintf(path, pathsz, "ACTIONS/%s/%06d.fan", action_dir_names[e->dir], e->slot);
+        else
+            snprintf(path, pathsz, "ACTIONS/%06d.fan", e->slot);
+        FILE *f = fopen_ci(path, "rb");
+        if (f) {
+            fclose(f);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* Views/ErPalLut: a 48-byte header (le32 fields), `count` entries of a
+ * 768-byte palette plus the offset and size of a zstd colour LUT the
+ * re-release's own renderer uses, then two maps of le32 (palette << 16 |
+ * camera): one for the view palettes, one for the intro's .PA2 set. Only the
+ * palettes and maps are read; they match the original data byte for byte. */
+typedef struct {
+    int loaded;
+    uint32_t count, entries;
+    uint32_t *views, *intro;
+    uint32_t num_views, num_intro;
+} pal_lut_t;
+
+static pal_lut_t pal_lut;
+
+static uint32_t le32(const uint8_t *p) {
+    return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+}
+
+static uint32_t *read_pal_map(FILE *f, uint32_t offset, uint32_t n) {
+    uint32_t *map = (uint32_t *)malloc((size_t)n * 4);
+    if (!map) return NULL;
+    uint8_t raw[4];
+    fseek(f, (long)offset, SEEK_SET);
+    for (uint32_t i = 0; i < n; i++) {
+        if (fread(raw, 1, 4, f) != 4) { free(map); return NULL; }
+        map[i] = le32(raw);
+    }
+    return map;
+}
+
+static void load_pal_lut(void) {
+    pal_lut.loaded = 1;
+    FILE *f = fopen_ci("Views/ErPalLut", "rb");
+    if (!f) return;
+
+    uint8_t h[48];
+    if (fread(h, 1, sizeof(h), f) != sizeof(h) || memcmp(h, "ErPalLut", 8) != 0 ||
+        le32(h + 8) != 1 || le32(h + 16) != 768) {
+        DBG_LOG(1, "[FILE] Views/ErPalLut: unknown header\n");
+        fclose(f);
+        return;
+    }
+    pal_lut.count = le32(h + 12);
+    pal_lut.entries = le32(h + 24);
+    pal_lut.num_views = le32(h + 36);
+    pal_lut.num_intro = le32(h + 44);
+    pal_lut.views = read_pal_map(f, le32(h + 32), pal_lut.num_views);
+    pal_lut.intro = read_pal_map(f, le32(h + 40), pal_lut.num_intro);
+    if (!pal_lut.views) pal_lut.num_views = 0;
+    if (!pal_lut.intro) pal_lut.num_intro = 0;
+    fclose(f);
+}
+
+int file_read_remaster_palette(int camera, int intro, uint8_t out[768]) {
+    if (!pal_lut.loaded) load_pal_lut();
+
+    const uint32_t *map = intro ? pal_lut.intro : pal_lut.views;
+    uint32_t n = intro ? pal_lut.num_intro : pal_lut.num_views;
+    for (uint32_t i = 0; i < n; i++) {
+        if ((int)(map[i] & 0xFFFF) != camera) continue;
+        uint32_t pal = map[i] >> 16;
+        if (pal >= pal_lut.count) return 0;
+
+        FILE *f = fopen_ci("Views/ErPalLut", "rb");
+        if (!f) return 0;
+        fseek(f, (long)(pal_lut.entries + pal * 0x308), SEEK_SET);
+        int ok = fread(out, 1, 768, f) == 768;
+        fclose(f);
+        return ok;
+    }
+    return 0;
+}
+
+int file_wide_views_available(void) {
+    static int known = -1;
+    if (known < 0) {
+        char resolved[512];
+        known = remaster_layout &&
+                resolve_ci("", "Views/Fallback", resolved, sizeof(resolved));
+    }
+    return known;
+}
+
+#ifdef ECS_WIDESCREEN
+/* platforms/third_party/zstddeclib.c */
+size_t ZSTD_decompress(void *dst, size_t dst_capacity, const void *src, size_t src_size);
+unsigned ZSTD_isError(size_t code);
+
+/* Views/Fallback/NNNN ("ErBgView"): a 0x48-byte header, then zstd frames in
+ * (image, depth) pairs; only the first pair is the camera's view. The depth is
+ * stored as byte planes, low byte first: two planes (0xFFFF is sky) or, for a
+ * few deep views, three making a signed 24-bit value (-1 is sky). */
+int file_read_wide_view(int camera, uint8_t img[640 * 320], uint16_t depth[640 * 320]) {
+    char path[64];
+    snprintf(path, sizeof(path), "Views/Fallback/%04d", camera);
+    FILE *f = fopen_ci(path, "rb");
+    if (!f) return 0;
+
+    uint8_t h[0x48];
+    int ok = fread(h, 1, sizeof(h), f) == sizeof(h) && memcmp(h, "ErBgView", 8) == 0 &&
+             le32(h + 8) == 1 && le32(h + 12) == 0x48;
+    int w = h[16] | h[17] << 8, ht = h[18] | h[19] << 8;
+    uint32_t pixels = (uint32_t)w * (uint32_t)ht;
+    uint32_t planes_n = pixels ? le32(h + 28) / pixels : 0;
+    ok = ok && w > 0 && w <= 640 && ht == 320 && le32(h + 24) == pixels &&
+         (planes_n == 2 || planes_n == 3) && le32(h + 28) == pixels * planes_n;
+
+    uint32_t img_size = le32(h + 36), depth_size = le32(h + 40);
+    uint8_t *packed = NULL;
+    uint8_t *planes = NULL;
+    if (ok) {
+        packed = (uint8_t *)malloc((size_t)img_size + depth_size);
+        planes = (uint8_t *)malloc((size_t)pixels * planes_n);
+        ok = packed && planes &&
+             fread(packed, 1, (size_t)img_size + depth_size, f) == (size_t)img_size + depth_size;
+    }
+    fclose(f);
+
+    if (ok) {
+        size_t n = ZSTD_decompress(img, pixels, packed, img_size);
+        ok = !ZSTD_isError(n) && n == pixels;
+    }
+    if (ok) {
+        size_t n = ZSTD_decompress(planes, (size_t)pixels * planes_n, packed + img_size, depth_size);
+        ok = !ZSTD_isError(n) && n == (size_t)pixels * planes_n;
+    }
+    if (ok) {
+        for (uint32_t i = 0; i < pixels; i++) {
+            int32_t d = planes[i] | planes[pixels + i] << 8;
+            if (planes_n == 3) {
+                d |= (int32_t)planes[2 * pixels + i] << 16;
+                if (d & 0x800000) d -= 0x1000000;
+                depth[i] = d < 0 ? 0xFFFF : (d > 0xFFFE ? 0xFFFE : (uint16_t)d);
+            } else {
+                depth[i] = (uint16_t)d;
+            }
+        }
+    } else {
+        DBG_LOG(1, "[FILE] %s: unreadable wide view\n", path);
+    }
+
+    free(packed);
+    free(planes);
+    return ok ? w : 0;
+}
+#else
+int file_read_wide_view(int camera, uint8_t img[640 * 320], uint16_t depth[640 * 320]) {
+    (void)camera; (void)img; (void)depth;
+    return 0;
+}
+#endif
+
 /* True when a HIRES background set resolves through either root. */
 int hires_data_available(void) {
+    char resolved[512];
+    if (remaster_layout)
+        return resolve_ci("", remaster_dir("HIRES"), resolved, sizeof(resolved));
+
     int was_enhanced = enhanced_graphics;
     enhanced_graphics = 1;
 
-    char resolved[512];
     int found = resolve_ci(alt_data_root[0] ? alt_data_root : "", "HIRES",
                            resolved, sizeof(resolved));
     if (!found)
@@ -732,8 +1088,34 @@ void open_read_file2(const char *filename) {
     /* File2 is optional — don't quit if missing */
 }
 
+/* Header version of the main database: 27 and 30 for the DOS E1 releases,
+ * 48 for Win95 E1, 55 for E2. */
+static int16_t database_version(void) {
+    FILE *f = fopen_ci_root("", "CODE/ECSTATIC.FAN", "rb");
+    if (!f) return -1;
+    int16_t ver = -1;
+    if (getl(f) == 0x46414E54) /* 'FANT' */
+        ver = getw_be(f);
+    fclose(f);
+    return ver;
+}
+
+static int is_remaster_tree(void) {
+    char resolved[512];
+    if (!has_database("")) return 0;
+    return resolve_ci("", "Views/Win95", resolved, sizeof(resolved)) ||
+           resolve_ci("", "Views/DOS", resolved, sizeof(resolved));
+}
+
 void detect_game_version(void) {
     DBG_LOG(1, "[FILE] detect_game_version: entering, debug_verbose=%d\n", debug_verbose);
+    remaster_layout = is_remaster_tree();
+    if (remaster_layout) {
+        game_version = database_version() > 48 ? GAME_VERSION_E2 : GAME_VERSION_E1;
+        DBG_LOG(1, "[FILE] re-release data layout, E%d\n", game_version);
+        return;
+    }
+
     FILE *f = fopen_ci("OFFSETS", "rb");
     if (!f) f = fopen_ci("FILES/OFFSETS.DAT", "rb");
     if (!f) f = fopen_ci("../OFFSETS", "rb");
@@ -860,7 +1242,11 @@ void merge_a_file_no_message(const char *filename, int quiet) {
 
 /* file_merge_a_file  E1: 0x43AF80 | E2: 0x4452DC */
 void merge_a_file(const char *filename, int quiet) {
-    beep_message("Loading...");
+    /* The original printed this for its development per-file loads, which
+     * shipped games never did. The re-release loads everything that way, and
+     * the text was left on screen after almost every load. */
+    if (!remaster_layout)
+        beep_message("Loading...");
     merge_a_file_no_message(filename, quiet);
 }
 
@@ -1182,6 +1568,88 @@ void file_read_sound(FILE *f) {
     sound_list = sound;
 }
 
+/* The re-release ships each sound block's samples as a WAV: speech under
+ * Audio/Voice/<language>, effects under Audio/Sounds. The 22 kHz files hold
+ * the Win95 samples byte for byte (the blocks store them signed), so they land
+ * in sound_tab exactly as file_read_sound would put them. */
+static int load_wav_sound(int16_t name_index, const char *path) {
+    FILE *f = fopen_ci(path, "rb");
+    if (!f) return 0;
+
+    uint8_t h[12];
+    if (fread(h, 1, 12, f) != 12 || memcmp(h, "RIFF", 4) || memcmp(h + 8, "WAVE", 4)) {
+        fclose(f);
+        return 0;
+    }
+
+    int channels = 0, bits = 0;
+    long rate = 0;
+    for (;;) {
+        uint8_t ck[8];
+        if (fread(ck, 1, 8, f) != 8) break;
+        uint32_t len = (uint32_t)ck[4] | (uint32_t)ck[5] << 8 |
+                       (uint32_t)ck[6] << 16 | (uint32_t)ck[7] << 24;
+        if (!memcmp(ck, "fmt ", 4) && len >= 16) {
+            uint8_t fmt[16];
+            if (fread(fmt, 1, 16, f) != 16) break;
+            channels = fmt[2] | fmt[3] << 8;
+            rate = (long)fmt[4] | (long)fmt[5] << 8 | (long)fmt[6] << 16;
+            bits = fmt[14] | fmt[15] << 8;
+            if (fmt[0] != 1 || fmt[1] != 0) channels = 0; /* not PCM */
+            fseek(f, (long)(len - 16 + (len & 1)), SEEK_CUR);
+        } else if (!memcmp(ck, "data", 4)) {
+            if (channels != 1 || (bits != 8 && bits != 16) || rate < 4000 || rate > 32767)
+                break;
+            int32_t frames = (int32_t)(len / (uint32_t)(bits / 8));
+            sound_t *sound = (sound_t *)calloc(1, sizeof(sound_t));
+            char *pcm = (char *)malloc(frames > 0 ? (size_t)frames : 1);
+            if (!sound || !pcm) { free(sound); free(pcm); break; }
+            for (int32_t i = 0; i < frames; i++) {
+                /* Unsigned 8-bit, as file_read_sound leaves the blocks. */
+                if (bits == 8) {
+                    pcm[i] = (char)fgetc(f);
+                } else {
+                    fgetc(f);
+                    pcm[i] = (char)(fgetc(f) + 0x80);
+                }
+            }
+            sound->sound_name_index = name_index;
+            sound->use_flag = 1;
+            sound->sample_rate = (int16_t)rate;
+            sound->sound_length = frames;
+            sound->volume = 100;
+            sound->audio_ptr = pcm;
+            sound_tab[name_index] = sound;
+            sound->next = sound_list;
+            sound_list = sound;
+            fclose(f);
+            return 1;
+        } else {
+            fseek(f, (long)(len + (len & 1)), SEEK_CUR);
+        }
+    }
+    DBG_LOG(1, "[FILE] %s: not 8/16-bit mono PCM\n", path);
+    fclose(f);
+    return 0;
+}
+
+int file_load_remaster_sound(int16_t sound_index) {
+    if (sound_index < 0 || sound_index >= SOUND_TAB_SIZE) return 0;
+    if (!sound_names || !sound_names[sound_index].field_0[0]) return 0;
+
+    const char *name = sound_names[sound_index].field_0;
+    const char *lang = remaster_language_dir();
+    char path[256];
+    snprintf(path, sizeof(path), "Audio/Voice/%s/%s.wav", lang, name);
+    if (load_wav_sound(sound_index, path)) return 1;
+    if (strcmp(lang, "English") != 0) {
+        snprintf(path, sizeof(path), "Audio/Voice/English/%s.wav", name);
+        if (load_wav_sound(sound_index, path)) return 1;
+    }
+    snprintf(path, sizeof(path), "Audio/Sounds/%s.wav", name);
+    return load_wav_sound(sound_index, path);
+}
+
 /* file_read_repertoire  E1: ? | E2P: 0x426428 */
 void file_read_repertoire(FILE *f) {
     if (!f) return;
@@ -1305,6 +1773,8 @@ void load_a_sound(int sound_index) {
             fseek(file_pointer, sound_offset[sound_index], SEEK_SET);
             merge_sought_file(file_pointer, 1);
         }
+    } else if (remaster_layout) {
+        file_load_remaster_sound((int16_t)sound_index);
     } else if (sound_names && sound_names[sound_index].field_0[0]) {
         char path[128];
         snprintf(path, sizeof(path), "sounds/%s.fan", sound_names[sound_index].field_0);
@@ -1345,9 +1815,19 @@ void load_a_repertoire(int rep_index) {
  * defaults in place. */
 #define PORT_SETTINGS_FILE "ecstatica.cfg"
 
+static void apply_port_setting_overrides(void) {
+    const char *wide = getenv("ECSTATICA_WIDESCREEN");
+    if (wide && *wide) widescreen = atoi(wide) != 0;
+    const char *map3d = getenv("ECSTATICA_MAP3D");
+    if (map3d && *map3d) render_map3d = atoi(map3d) != 0;
+}
+
 void load_port_settings(void) {
     FILE *f = fopen(PORT_SETTINGS_FILE, "r");
-    if (!f) return;
+    if (!f) {
+        apply_port_setting_overrides();
+        return;
+    }
 
     char line[128];
     while (fgets(line, sizeof(line), f)) {
@@ -1375,9 +1855,12 @@ void load_port_settings(void) {
             if (value < SCALE_PILLARBOX) value = SCALE_PILLARBOX;
             if (value > SCALE_STRETCH) value = SCALE_STRETCH;
             display_scale_mode = (int16_t)value;
+        } else if (sscanf(line, "widescreen = %d", &value) == 1) {
+            widescreen = (value != 0);
         }
     }
     fclose(f);
+    apply_port_setting_overrides();
 }
 
 void save_port_settings(void) {
@@ -1390,6 +1873,7 @@ void save_port_settings(void) {
     fprintf(f, "enhanced_light = %d\n", (int)render_enhanced_light);
     fprintf(f, "map3d = %d\n", (int)render_map3d);
     fprintf(f, "scale_mode = %d\n", (int)display_scale_mode);
+    fprintf(f, "widescreen = %d\n", widescreen);
     fclose(f);
 }
 
@@ -1413,7 +1897,8 @@ void capture_save_thumbnail(void) {
     for (int ty = 0; ty < THUMB_H; ty++) {
         int sy = mode_svga ? ty * 8 : ty * screen_height / THUMB_H;
         for (int tx = 0; tx < THUMB_W; tx++) {
-            int sx = mode_svga ? tx * 8 : tx * screen_width / THUMB_W;
+            int sx = mode_svga ? (screen_width - 640) / 2 + tx * 8
+                               : tx * screen_width / THUMB_W;
             if (sy < screen_height && sx < screen_width)
                 pre_menu_thumbnail[ty * THUMB_W + tx] = bitmap[1 - db][sy * screen_width + sx];
             else
@@ -2460,8 +2945,30 @@ void read_actors(FILE *f, int quiet) {
         }
 
         if (event_type == ADD_THING || !event_type) {
-            if (selected_thing)
+            if (selected_thing) {
                 copy_actual_to_defaults(selected_thing);
+                /* Before version 22 there was no left-hand hold; it starts
+                 * as the right hand's. */
+                if (game_version == GAME_VERSION_E2 && file_version <= 21) {
+                    copy_vector(&selected_thing->held_off_left, &selected_thing->held_offset);
+                    copy_vector(&selected_thing->held_rot_left, &selected_thing->held_rotate);
+                }
+            }
+        }
+
+        /* Part flags from before bits 0x40 (fixed) and 0x800 meant anything. */
+        if (event_type == FLAGS && game_version == GAME_VERSION_E2) {
+            if (file_version <= 1)
+                event->param2 = -1;
+            if (file_version <= 30 && ((event->param1 & event->param2) & 0x40))
+                event->param2 &= ~0x40;
+            if (file_version <= 38)
+                event->param2 &= ~0x800;
+        }
+        if (event_type == THING_CODE && game_version == GAME_VERSION_E2 && file_version <= 43) {
+            event->param1 = 0;
+            event->param2 = 0;
+            event->param3 = 0;
         }
 
 check_add_thing:
@@ -2492,6 +2999,23 @@ check_add_thing:
                 selected_thing->flags &= 0xFFFDu;
             if (file_version >= 30)
                 selected_thing->extra_action_index = event->param3;
+            /* E2's database was re-saved at version 55, but the re-release
+             * ships the loose files in every version back to 33. Each later
+             * version gave meaning to bits an older file may have set, so
+             * those are dropped (Ecstatica II.exe, sub_140113ED0). */
+            if (game_version == GAME_VERSION_E2) {
+                int v = file_version;
+                uint16_t fl = selected_thing->flags;
+                if (v <= 16) fl &= ~0x0020;
+                if (v <= 23) fl &= ~0x4000;
+                if (v <= 24) fl &= ~0x1000;
+                if (v <= 32) selected_thing->state_flags = 0;
+                if (v <= 46) fl &= ~0x0004;
+                if (v <= 51) fl &= ~0x0010;
+                if (v <= 53) fl &= ~0x0100;
+                if (v <= 54) fl &= ~0x0200;
+                selected_thing->flags = fl;
+            }
         }
         free_event(event);
     } while (event_type);

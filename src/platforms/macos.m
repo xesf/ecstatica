@@ -371,10 +371,29 @@ int platform_crop_inset_y(platform_t *p, int render_h) {
     return 0;
 }
 
+/* The window follows the frame's shape: 4:3 for 640x480 and for 320x200
+ * (shown at 4:3, as on a CRT), wider for the widescreen mode. */
 void platform_set_render_size(platform_t *p, int w, int h) {
     if (!p) return;
     p->render_width  = w;
     p->render_height = h;
+
+    int fb_w = (h == p->fb_height && w * 3 > h * 4) ? w : p->fb_height * 4 / 3;
+    if (fb_w == p->fb_width) return;
+    uint32_t *buf = (uint32_t *)calloc((size_t)fb_w * p->fb_height, sizeof(uint32_t));
+    if (!buf) return;
+    free(p->rgba_buffer);
+    p->rgba_buffer = buf;
+    p->fb_width = fb_w;
+
+    @autoreleasepool {
+        if (!p->window) return;
+        NSRect content = [p->window contentRectForFrameRect:[p->window frame]];
+        CGFloat ch = content.size.height;
+        [p->window setContentSize:NSMakeSize(ch * fb_w / p->fb_height, ch)];
+        if (p->gl_view) [p->gl_view setFrame:[p->view bounds]];
+        if (p->gl_ctx) [p->gl_ctx update];
+    }
 }
 
 /* ── Hardware rendering (OpenGL) ──────────────────────────── */

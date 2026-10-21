@@ -116,6 +116,8 @@ static tsf *load_soundfont(void) {
         found = true;
     }
     if (!found) found = scan_dir(".", path, sizeof(path));
+    /* The re-release bundles a GM bank with its data. */
+    if (!found) found = scan_dir("Audio/Music/Instruments", path, sizeof(path));
     if (!found && s_sf_dir[0]) found = scan_dir(s_sf_dir, path, sizeof(path));
     if (!found) {
         DBG_LOG(1, "[MIDI] no .sf2 soundfont found, music is silent\n");

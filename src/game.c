@@ -304,6 +304,8 @@ static int execute_boolean_body(int16_t **pp, actor_t *actor) {
     }
 
     int16_t token = *tp;
+    if (token == CT_SKIP_KEY_PRESSED)
+        token = CT_ANY_KEY_PRESSED;
 
     if (token == CT_STARTED || token == CT_NOT_STARTED ||
         token == CT_FINISHED || token == CT_NOT_FINISHED ||
@@ -619,6 +621,8 @@ static int execute_boolean_body(int16_t **pp, actor_t *actor) {
         tp++;
     }
     else {
+        DBG_LOG(1, "[CODE] unexpected boolean token %d (%d %d %d) actor=%s\n", token,
+                tp[1], tp[2], tp[3], actor ? file_find_thing_name(actor->name_index) : "-");
         quit("Unexpected token in boolean expression");
         tp++;
     }
@@ -683,6 +687,10 @@ void do_execute_code(code_t *code, actor_t *actor) {
         if (opcode == 0) {
             return;
         }
+        if (opcode == CT_PLAY_SCENE_AFTER_VOICE)
+            opcode = CT_PLAY_SCENE;
+        else if (opcode == CT_SKIP_KEY_PRESSED)
+            opcode = CT_ANY_KEY_PRESSED;
 
         switch (opcode) {
 
@@ -2531,12 +2539,16 @@ void put_a_graphic(const char *name, int pos_x, int pos_y, int intro_graphic) {
         return;
     }
 
+    /* Widescreen: intro art stays on the centred original view; HUD pieces
+     * keep to the edge (or the centre) they were placed against. */
+    int margin = wide_margin();
     int x, y;
     if (intro_graphic) {
-        x = pos_x * screen_width / 320 - graphic_size_x[idx] / 2;
+        x = pos_x * (screen_width - 2 * margin) / 320 - graphic_size_x[idx] / 2 + margin;
         y = pos_y * screen_height / 200 - graphic_size_y[idx] / 2;
     } else {
-        x = pos_x;
+        int centre = pos_x + graphic_size_x[idx] / 2;
+        x = pos_x + (centre < 640 / 3 ? 0 : centre > 2 * 640 / 3 ? 2 * margin : margin);
         y = pos_y;
     }
     graphic_x[idx] = (int16_t)x;
@@ -3001,7 +3013,7 @@ static void draw_icon_page_graphics(void) {
     for (int i = 0; i < (int)(sizeof(items)/sizeof(items[0])); i++) {
         int16_t idx = find_scene_name_index(items[i].name);
         if (idx >= 0 && (scene_name_flags[idx] & 8))
-            put_a_temp_graphic(items[i].name, items[i].x, items[i].y);
+            put_a_temp_graphic(items[i].name, items[i].x + wide_margin(), items[i].y);
     }
 }
 
@@ -3031,8 +3043,7 @@ void show_icon_page(void) {
         icon_palette[i].B = raw_pal[i * 3 + 2] >> 2;
     }
 
-    int pixels = screen_width * screen_height;
-    fread_ignore(bitmap[3], 1, pixels, f);
+    read_screen_image(f, bitmap[3]);
     fclose(f);
 
     set_palette(all_black_cmap);
@@ -3180,10 +3191,23 @@ int enhanced_graphics_available(void) {
     return !low_res_only;
 }
 
+static void apply_resolution(int enabled);
+
 void set_enhanced_graphics(int enabled) {
     if (!enhanced_graphics_available()) return;
     if ((mode_svga != 0) == (enabled != 0)) return;
+    apply_resolution(enabled);
+}
 
+/* The 640x480 mode is rebuilt at the new width, the same way a resolution
+ * switch rebuilds it. */
+void set_widescreen(int enabled) {
+    if (widescreen == (enabled != 0)) return;
+    widescreen = (enabled != 0);
+    if (mode_svga) apply_resolution(1);
+}
+
+static void apply_resolution(int enabled) {
     /* go_vga/go_svga reach window_proc through make_game_screen, so a hotkey
      * held across the switch would otherwise recurse back into here. */
     static int switching = 0;
@@ -3299,7 +3323,7 @@ void load_palette_and_set_background(const char *filename) {
         colour_map[i].B = pal[i * 3 + 2] >> 2;
     }
 
-    fread_ignore(bitmap[2], 1, screen_width * screen_height, f);
+    read_screen_image(f, bitmap[2]);
     fclose(f);
 
     clip_blit(2, 0, 0, 0, 0, 0, screen_width, screen_height, 0xC0);
@@ -4116,6 +4140,8 @@ void check_sound_loaded(int16_t sound_index) {
             fseek(file2_pointer, offset & 0x7FFFFFFF, SEEK_SET);
             merge_sought_file(file2_pointer, 1);
         }
+    } else if (remaster_layout) {
+        file_load_remaster_sound(sound_index);
     } else if (sound_names && sound_names[sound_index].field_0[0]) {
         char path[128];
         snprintf(path, sizeof(path), "sounds/%s.fan", sound_names[sound_index].field_0);
@@ -4568,7 +4594,11 @@ void search_actor_dirs_and_load(const char *name) {
 
 /* game_search_action_dirs_and_load */
 void search_action_dirs_and_load(const char *name) {
-    try_merge_with_case("actions", "ACTIONS", name, "fan");
+    char path[128];
+    if (file_find_action_file(name, path, sizeof(path)))
+        merge_a_file(path, 1);
+    else
+        try_merge_with_case("actions", "ACTIONS", name, "fan");
 }
 
 /* game_play_ambients_457780 */

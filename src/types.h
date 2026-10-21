@@ -42,6 +42,10 @@ extern int game_version;
  * planes to the active mode and keeps the same margin. */
 #define BITMAP_SLACK (BITMAP_SIZE - 640 * 480)
 
+/* Width of the 480-row screen in widescreen mode (16:9). The original 640
+ * columns sit in the middle; the re-release's wide views fill the sides. */
+#define WIDE_SCREEN_WIDTH 854
+
 #define ACTOR_POOL_SIZE      200
 #define PART_POOL_SIZE      4000
 #define ACTION_POOL_SIZE     400
@@ -302,7 +306,14 @@ typedef enum CODE_TOKENS {
     CT_FADE_TO_BLACK, CT_FADE_TO_WHITE, CT_FADE_IN,
     CT_BLOCK_AQUATIC, CT_END_OF_INTRO, CT_ENGLISH,
     CT_FRENCH, CT_GERMAN, CT_ITALIAN, CT_SPANISH,
-    CT_POLISH, CT_JAPANESE, CT_MAX
+    CT_POLISH, CT_JAPANESE,
+    /* Added by the modern re-release. PlaySceneAfterVoice defers the scene
+     * until the calling scene's voice clip ends; SkipKeyPressed is a one-shot
+     * latch of its skip input, used by both games' intro-skip checks. With no
+     * voice playback and no separate skip input they run as PlayScene and
+     * AnyKeyPressed, the commands they replaced in the scripts. */
+    CT_PLAY_SCENE_AFTER_VOICE, CT_SKIP_KEY_PRESSED,
+    CT_MAX
 } CODE_TOKENS;
 
 extern int debug_verbose;  /* 0 = quiet, 1 = important, 2 = verbose */

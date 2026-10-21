@@ -40,8 +40,10 @@ int32_t ambiant_last[20];
 
 int32_t tune_offset[10][96];
 
-/* E1 tune names per sound index (0x479F70), matched to MUSIC/<NAME>.<ext>. */
-const char *tune_names_e1[75] = {
+/* Tune names per sound index (E1 0x479F70), matched to MUSIC/<NAME>.<ext>
+ * and to the re-release's MIDI files. E1 has the first 75; E2WIN95.EXE carries
+ * the same list with E2's own 21 after them. */
+const char *tune_names[NUM_TUNE_NAMES] = {
     "EEVILEND", "EBKGRD1",  "EBKGRD1A", "EBKGRD1B", "EBKGRD1C",
     "EBKGRD2",  "EBKGRD2A", "EBKGRD2B", "EBKGRD2C", "EBKGRD2A",
     "EBKGRD2B", "EBKGRD3",  "EBKGRD3A", "EBKGRD3B", "EBKGRD3C",
@@ -57,6 +59,11 @@ const char *tune_names_e1[75] = {
     "STNG38_9", "STNG39_7", "STNG40_7", "STNG41_9", "STNG4219",
     "STNG4316", "STNG4412", "STNG4510", "STNG46_5", "STNG47_8",
     "STNG48_8", "STNG4912", "STNG5015", "EDEMFLU2", "EDEMENTQ",
+    "CASTLAMB", "CASTLE_I", "CRYPT_ID", "CRYPTAMB", "GRAVE_ID",
+    "GRAVEAMB", "TOWER_I",  "TOWERAMB", "VILL_AMB", "VILL_ID",
+    "WILD_AMB", "WILD_ID",  "CASTLE2",  "CASTLE3",  "CASTLE4",
+    "GENERIC1", "GENERIC2", "GENERIC3", "GENERIC4", "THEME",
+    "OUTRO",
 };
 
 static int16_t tune_fade_target;

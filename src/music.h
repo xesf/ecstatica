@@ -31,6 +31,9 @@ struct sound_s {
 };
 #pragma pack(pop)
 
+#define NUM_TUNE_NAMES 96
+extern const char *tune_names[NUM_TUNE_NAMES];
+
 extern int16_t sound_driver;
 extern bool sound_is_on;
 extern bool music_on;

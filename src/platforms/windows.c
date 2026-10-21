@@ -333,10 +333,35 @@ int platform_crop_inset_y(platform_t *p, int render_h) {
     return 0;
 }
 
+/* The window follows the frame's shape: 4:3 for 640x480 and for 320x200
+ * (shown at 4:3, as on a CRT), wider for the widescreen mode. */
 void platform_set_render_size(platform_t *p, int w, int h) {
+    int fb_w;
+    uint32_t *buf;
+
     if (!p) return;
     p->render_width  = w;
     p->render_height = h;
+
+    fb_w = (h == p->fb_height && w * 3 > h * 4) ? w : p->fb_height * 4 / 3;
+    if (fb_w == p->fb_width) return;
+    buf = (uint32_t *)calloc((size_t)fb_w * p->fb_height, sizeof(uint32_t));
+    if (!buf) return;
+    free(p->rgba_buffer);
+    p->rgba_buffer = buf;
+    p->fb_width = fb_w;
+    p->bmi.bmiHeader.biWidth = fb_w;
+
+    /* Fullscreen letterboxes into whatever the client area is. */
+    if (p->hwnd && !p->fullscreen) {
+        RECT rc;
+        DWORD style = (DWORD)GetWindowLongA(p->hwnd, GWL_STYLE);
+        rc.left = 0; rc.top = 0;
+        rc.right = fb_w * p->scale; rc.bottom = p->fb_height * p->scale;
+        AdjustWindowRect(&rc, style, FALSE);
+        SetWindowPos(p->hwnd, NULL, 0, 0, rc.right - rc.left, rc.bottom - rc.top,
+                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
 }
 
 /* Put p->rgba_buffer on the screen, letterboxed into the client area. */

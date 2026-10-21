@@ -60,6 +60,7 @@ void update_velocity(actor_t *actor);
 int  do_update_velocity(actor_t *actor, int time_interval);
 void flush_backgrounds(void);
 int load_raw(void);
+void widen_background(const char *img, const int16_t *mask);
 char *load_raw_graphic(const char *source, int *size_x, int *size_y);
 void load_palette(const char *filename);
 void load_visibility_map(void);

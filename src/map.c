@@ -570,6 +570,10 @@ void make_invisible(actor_t *actor) {
  * (rows repeated 3,2,2,3,2 per 5). */
 void copy_vga_to_svga(void) {
     static char svga_buf[640 * 480];
+    /* A wide screen builds the 640-wide view aside and widens it after. */
+    static int16_t wide_mask[640 * 480];
+    int widen = screen_width != 640;
+    int16_t *mask_dst = widen ? wide_mask : mask_map[0];
 
     int dst_y = 0;
     int src_pix_off = 0;
@@ -601,13 +605,13 @@ void copy_vga_to_svga(void) {
 
             int16_t mask_val = mask_map[2][src_mask_off + x];
             int mx = x * 2;
-            mask_map[0][dst_row0_mask + mx]     = mask_val;
-            mask_map[0][dst_row0_mask + mx + 1] = mask_val;
-            mask_map[0][dst_row1_mask + mx]     = mask_val;
-            mask_map[0][dst_row1_mask + mx + 1] = mask_val;
+            mask_dst[dst_row0_mask + mx]     = mask_val;
+            mask_dst[dst_row0_mask + mx + 1] = mask_val;
+            mask_dst[dst_row1_mask + mx]     = mask_val;
+            mask_dst[dst_row1_mask + mx + 1] = mask_val;
             if (triple) {
-                mask_map[0][dst_row2_mask + mx]     = mask_val;
-                mask_map[0][dst_row2_mask + mx + 1] = mask_val;
+                mask_dst[dst_row2_mask + mx]     = mask_val;
+                mask_dst[dst_row2_mask + mx + 1] = mask_val;
             }
         }
 
@@ -616,6 +620,12 @@ void copy_vga_to_svga(void) {
         src_mask_off += 320;
     }
 
+    if (widen) {
+        widen_background(svga_buf, wide_mask);
+        clip_mask(2, 0, 0, 0, screen_width, screen_height);
+        clip_mask(2, 1, 0, 0, screen_width, screen_height);
+        return;
+    }
     memcpy(bitmap[3], svga_buf, 640 * 480);
     clip_mask(0, 1, 0, 0, screen_width, screen_height);
     clip_mask(0, 2, 0, 0, screen_width, screen_height);

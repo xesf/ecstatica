@@ -14,7 +14,12 @@
 #include "icon.h"
 #include "map.h"
 #include "menu.h"
+#include "display.h"
+#include "file.h"
 #include "music.h"
+#include "anim.h"
+#include "game.h"
+#include "edit.h"
 #include "prefetch.h"
 #include "render.h"
 #include "req.h"
@@ -100,8 +105,6 @@ void setup(void) {
             language = config.language;
         }
     }
-
-    load_port_settings();
 
     /* do_init() ran before the stored preference was loaded. */
     platform_set_scale_mode(win_platform(), display_scale_mode);
@@ -191,6 +194,9 @@ void init(void) {
 
     detect_game_version();
     init_data_roots();
+
+    /* Before the boot resolution is picked below: widescreen sets its width. */
+    load_port_settings();
 
     /* E1 data predating the Win95 release ships only 320x200 backgrounds, so
      * it boots in VGA. A nested W/ folder (or a HIRES set in the launch dir)
@@ -362,11 +368,30 @@ void set_up_sound_driver(void) {
 }
 
 /* init_load_tune  E1: 0x41148C | E2: 0x4142B8 */
-extern const char *tune_names_e1[75];
 void load_tune(int sound_idx) {
     tune_buffer_length = 0;
     if (!tune_buffer) return;
     if (sound_driver < 1 || sound_idx < 1) return;
+
+    /* The re-release ships every tune as a standard MIDI file, which
+     * play_tune hands to the platform synth unconverted. */
+    if (remaster_layout) {
+        if (sound_idx > NUM_TUNE_NAMES) return;
+        char path[128];
+        snprintf(path, sizeof(path), "Audio/Music/Tunes/MIDI/%s.mid",
+                 tune_names[sound_idx - 1]);
+        FILE *f = fopen_ci(path, "rb");
+        if (!f) {
+            DBG_LOG(1, "[TUNE] missing %s\n", path);
+            return;
+        }
+        size_t n = fread(tune_buffer, 1, 48000, f);
+        if (n > 0 && n < 48000)
+            tune_buffer_length = (int32_t)n;
+        fclose(f);
+        DBG_LOG(2, "[TUNE] %d %s, %d bytes\n", sound_idx, path, (int)tune_buffer_length);
+        return;
+    }
 
     if (load_by_offset) {
         /* Monolithic archive path — indexed by driver/tune.
@@ -397,7 +422,7 @@ try_per_file:
             int di = (drv_start + d) % 5;
             char path[128];
             snprintf(path, sizeof(path), "MUSIC/%s.%s",
-                     tune_names_e1[sound_idx - 1], exts[di]);
+                     tune_names[sound_idx - 1], exts[di]);
             FILE *f = fopen_ci(path, "rb");
             if (!f) continue;
             fseek(f, 0, SEEK_END);
@@ -417,8 +442,13 @@ void set_up_bitmaps(void) {
     /* Size the planes to the largest mode this session can reach. go_svga()
      * is the only widener and bails out when low_res_only, so a low-res-only
      * session saves 2.44 MB. */
+#ifdef ECS_WIDESCREEN
+    int32_t plane_pixels = (low_res_only ? (320 * 200) : (WIDE_SCREEN_WIDTH * 480))
+                         + BITMAP_SLACK;
+#else
     int32_t plane_pixels = (low_res_only ? (320 * 200) : (640 * 480))
                          + BITMAP_SLACK;
+#endif
 
     bitmap[0] = (char *)calloc(plane_pixels, 1);
     bitmap[1] = (char *)calloc(plane_pixels, 1);
@@ -459,7 +489,7 @@ void load_logo(const char *file_name) {
         spare_cmap[i].B = pal[i * 3 + 2] >> 2;
     }
 
-    fread_ignore(bitmap[3], 1, screen_width * screen_height, f);
+    read_screen_image(f, bitmap[3]);
     fclose(f);
 
     clip_blit(3, 0, 0, 0, 0, 0, screen_width, screen_height, 0xC0);
@@ -522,7 +552,7 @@ void load_background_title(void) {
         spare_cmap[i].B = pal[i * 3 + 2] >> 2;
     }
 
-    fread_ignore(bitmap[3], 1, screen_width * screen_height, f);
+    read_screen_image(f, bitmap[3]);
     fclose(f);
 
     clip_blit(3, 0, 0, 0, 0, 0, screen_width, screen_height, 0xC0);

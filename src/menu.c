@@ -16,6 +16,8 @@
 #include "req.h"
 #include "platform.h"
 #include "win.h"
+#include "asm_f.h"
+#include "icon.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -510,6 +512,7 @@ enum {
     SETT_MAP3D,
     SETT_SCALEMODE,
     SETT_SPEED_MODE,
+    SETT_WIDESCREEN,
     SETT_MAX
 };
 
@@ -642,6 +645,9 @@ static void settings_get_value(int id, char *buf, int bufsz) {
     case SETT_SPEED_MODE:
         snprintf(buf, bufsz, "%s", speed_mode_names[e1_speed_mode_step()]);
         break;
+    case SETT_WIDESCREEN:
+        snprintf(buf, bufsz, "%s", widescreen ? "16:9" : "4:3 (Original)");
+        break;
     }
 }
 
@@ -712,6 +718,10 @@ static void settings_adjust(int id, int dir) {
     case SETT_SPEED_MODE:
         e1_cycle_speed_mode(dir);
         break;
+    case SETT_WIDESCREEN:
+        set_widescreen(!widescreen);
+        save_port_settings();
+        break;
     }
 }
 
@@ -719,7 +729,7 @@ static const char *settings_labels[] = {
     "Difficulty", "Language", "Music", "Sound FX", "Subtitles",
     "Subtitle Size", "Subtitle Hold", "Graphics",
     "Supersampling", "3D Lighting", "Background", "Scale Mode",
-    "Speed Mode"
+    "Speed Mode", "Aspect Ratio"
 };
 
 /* Shared driver for Settings and its Enhanced sub-panel: same rows, same
@@ -773,7 +783,7 @@ static void run_settings_panel(const char *title, const int *items, int num_item
             int id = items[sel];
             if (id == SETT_MUSIC || id == SETT_SOUNDFX || id == SETT_SUBTITLES ||
                 id == SETT_GRAPHICS || id == SETT_LIGHTING ||
-                id == SETT_MAP3D)
+                id == SETT_MAP3D || id == SETT_WIDESCREEN)
                 settings_adjust(id, 1);
             platform_delay(150);
         }
@@ -793,6 +803,11 @@ void do_enhanced_menu(void) {
         int modes[3];
         if (gfx_mode_list(modes) > 1) items[num_items++] = SETT_GRAPHICS;
     }
+    /* Only with the re-release's wide views, in a build that can show them. */
+#ifdef ECS_WIDESCREEN
+    if (file_wide_views_available())
+        items[num_items++] = SETT_WIDESCREEN;
+#endif
     items[num_items++] = SETT_SUBTITLE_SIZE;
     items[num_items++] = SETT_SUBTITLE_HOLD;
     /* Only where a hardware backend actually came up. */

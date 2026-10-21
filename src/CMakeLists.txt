@@ -34,7 +34,8 @@ set(C_SRCS
     gl_loader.c
 )
 
-list(APPEND C_SRCS platforms/desktop_common.c platforms/threads.c)
+list(APPEND C_SRCS platforms/desktop_common.c platforms/threads.c
+     platforms/third_party/zstddeclib.c)
 
 if(APPLE)
     enable_language(OBJC)
@@ -71,7 +72,14 @@ endif()
 target_compile_definitions(ecstatica PRIVATE
     $<$<CONFIG:Debug>:DEBUG>
     ENABLE_FRAME_DUMP
+    ECS_WIDESCREEN
 )
+
+# Vendored zstd decoder (Views/Fallback); its own warnings are not ours.
+if(NOT MSVC)
+    set_source_files_properties(platforms/third_party/zstddeclib.c
+        PROPERTIES COMPILE_OPTIONS "-w")
+endif()
 
 # The hardware renderer. Only this build defines ECS_ENABLE_GL; dos/, pocket/
 # and psp/ compile the same sources with it undefined, which reduces

@@ -285,10 +285,47 @@ int platform_crop_inset_y(platform_t *p, int render_h) {
     return 0;
 }
 
+/* The window follows the frame's shape: 4:3 for 640x480 and for 320x200
+ * (shown at 4:3, as on a CRT), wider for the widescreen mode. */
 void platform_set_render_size(platform_t *p, int w, int h) {
     if (!p) return;
     p->render_width  = w;
     p->render_height = h;
+
+    int fb_w = (h == p->fb_height && w * 3 > h * 4) ? w : p->fb_height * 4 / 3;
+    if (fb_w == p->fb_width) return;
+
+    uint32_t *buf = (uint32_t *)calloc((size_t)fb_w * p->fb_height, sizeof(uint32_t));
+    if (!buf) return;
+    Visual *visual = DefaultVisual(p->display, p->screen);
+    int depth = DefaultDepth(p->display, p->screen);
+    XImage *img = XCreateImage(p->display, visual, depth, ZPixmap, 0, (char *)buf,
+                               fb_w, p->fb_height, 32, fb_w * 4);
+    if (!img) { free(buf); return; }
+
+    p->ximage->data = NULL;   /* the buffer is ours, not XDestroyImage's */
+    XDestroyImage(p->ximage);
+    free(p->rgba_buffer);
+    p->ximage = img;
+    p->rgba_buffer = buf;
+    p->fb_width = fb_w;
+
+    int win_w = fb_w * p->scale;
+    int win_h = p->fb_height * p->scale;
+    XSizeHints *hints = XAllocSizeHints();
+    if (hints) {
+        hints->flags = PMinSize | PMaxSize;
+        hints->min_width  = hints->max_width  = win_w;
+        hints->min_height = hints->max_height = win_h;
+        XSetWMNormalHints(p->display, p->window, hints);
+        XFree(hints);
+    }
+    XResizeWindow(p->display, p->window, (unsigned)win_w, (unsigned)win_h);
+#ifdef ECS_ENABLE_GL
+    if (p->gl_window)
+        XResizeWindow(p->display, p->gl_window, (unsigned)win_w, (unsigned)win_h);
+#endif
+    XFlush(p->display);
 }
 
 /* ── Hardware rendering (GLX) ─────────────────────────────── */
@@ -1267,6 +1304,8 @@ static bool midi_find_soundfont(char *out, size_t outlen) {
 
     /* Game data directory (cwd), so a bank can ship alongside the data. */
     if (midi_scan_dir(".", out, outlen)) return true;
+    /* The re-release bundles a GM bank with its data. */
+    if (midi_scan_dir("Audio/Music/Instruments", out, outlen)) return true;
 
     const char *home = getenv("HOME");
     if (home && home[0]) {
