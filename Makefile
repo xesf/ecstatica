@@ -15,6 +15,8 @@
 #   make e2-images  — same, opening on the raw image browser
 #   make e1-images  — same, opening on the raw image browser
 #   make e2-pointcloud / e1-pointcloud — write pointcloud.ply from every view
+#   make e1-neo-demo / e2-neo-demo — build + run the re-release demo in place
+#                    (WIDE=1 for the 16:9 mode, WIDE=0 for 4:3)
 #   make clean      — remove build artifacts
 #   make dump       — regenerate wdump text for E2WIN95P.EXE
 #
@@ -68,6 +70,9 @@ E2_DIR   		= data/e2
 E1_DIR   		= data/e1/W
 E1_DIR_DOS   	= data/e1
 E1_DIR_ORIG		= data/e1-dos
+# The re-release ("Neo") demos, run in place: the binary is not copied in.
+E1_NEO_DEMO_DIR	= data/Ecstatica Demo
+E2_NEO_DEMO_DIR	= data/Ecstatica II Demo
 
 # ── DOS ───────────────────────────────────────────────────────
 WATCOM     ?= $(HOME)/watcom
@@ -87,7 +92,7 @@ WIN9X_EXE   = platforms/win9x/ecstatica.exe
 WINE       ?= wine
 
 .PHONY: ios-configure
-.PHONY: all run e1 e2 e1-viewer e2-viewer e1-scenes e2-scenes e1-images e2-images e1-pointcloud e2-pointcloud build clean dump \
+.PHONY: all run e1 e2 e1-neo-demo e2-neo-demo e1-viewer e2-viewer e1-scenes e2-scenes e1-images e2-images e1-pointcloud e2-pointcloud build clean dump \
         dos dos-e1 dos-e2 dos-clean win9x win9x-e1 win9x-e2 win9x-clean \
         psp psp-release psp-install psp-clean vita vita-clean \
         web web-serve web-clean android android-install android-clean \
@@ -113,6 +118,15 @@ e1: $(BUILT)
 	cp $(BUILT) $(E1_DIR)/
 	chmod +x $(E1_DIR)/$(TARGET)
 	cd $(E1_DIR) && ./$(TARGET)
+
+# WIDE overrides the saved Aspect Ratio setting for this run.
+NEO_ENV = $(if $(WIDE),ECSTATICA_WIDESCREEN=$(WIDE))
+
+e1-neo-demo: $(BUILT)
+	cd "$(E1_NEO_DEMO_DIR)" && $(NEO_ENV) "$(CURDIR)/$(BUILT)"
+
+e2-neo-demo: $(BUILT)
+	cd "$(E2_NEO_DEMO_DIR)" && $(NEO_ENV) "$(CURDIR)/$(BUILT)"
 
 e2-viewer: $(BUILT)
 	cp $(BUILT) $(E2_DIR)/
