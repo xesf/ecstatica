@@ -51,7 +51,7 @@ unsigned int sceUserMainThreadStackSize = 1024 * 1024;
 /* CDRAM blocks are allocated in 256 KB units. */
 #define FB_BYTES      ((SCREEN_W * SCREEN_H * 4 + 0x3FFFF) & ~0x3FFFF)
 
-#define MAX_RENDER_W  640
+#define MAX_RENDER_W  WIDE_SCREEN_WIDTH
 #define MAX_RENDER_H  480
 
 #define PKEY_TABLE_SIZE 256
@@ -97,8 +97,19 @@ static int      s_scale_mode = SCALE_PILLARBOX;
 static void build_scale_maps(int sw, int sh) {
     int v0, v1;
 
+    /* A frame wider than 4:3 (the widescreen mode, 16:9 like the panel) fills
+     * the width whatever the scale mode; no bars, nothing to crop. */
+    int mode = (sw * 3 > sh * 4) ? -1 : s_scale_mode;
+
     /* The panel is wider than 4:3, so cropping is only ever vertical. */
-    switch (s_scale_mode) {
+    switch (mode) {
+    case -1:
+        s_dst_w = SCREEN_H * sw / sh;
+        if (s_dst_w > SCREEN_W) s_dst_w = SCREEN_W;
+        s_dst_x = (SCREEN_W - s_dst_w) / 2;
+        v0 = 0;
+        v1 = sh;
+        break;
     case SCALE_CROP: {
         int full_h = SCREEN_W * 3 / 4;
         int off = (full_h - SCREEN_H) / 2;
@@ -132,8 +143,8 @@ static void build_scale_maps(int sw, int sh) {
 }
 
 int platform_crop_inset_y(platform_t *p, int render_h) {
-    (void)p;
     if (s_scale_mode != SCALE_CROP) return 0;
+    if (p && p->render_w * 3 > render_h * 4) return 0;
     int full_h = SCREEN_W * 3 / 4;
     int off = (full_h - SCREEN_H) / 2;
     return off * render_h / full_h;

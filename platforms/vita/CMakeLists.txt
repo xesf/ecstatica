@@ -56,10 +56,15 @@ file(GLOB ENGINE_SRCS ${SRC_DIR}/*.c ${SRC_DIR}/tools/*.c)
 # The engine is the same; only VITA_GAME_DIR and the package metadata differ.
 function(ecstatica_vpk game title_id app_name)
     set(exe ecstatica_${game})
-    add_executable(${exe} ${ENGINE_SRCS} ${SRC_DIR}/platforms/vita.c)
+    add_executable(${exe} ${ENGINE_SRCS} ${SRC_DIR}/platforms/vita.c
+                   ${SRC_DIR}/platforms/third_party/zstddeclib.c)
     target_include_directories(${exe} PRIVATE ${SRC_DIR})
     set_property(TARGET ${exe} PROPERTY C_STANDARD 99)
-    target_compile_definitions(${exe} PRIVATE VITA_GAME_DIR="${game}")
+    # ECS_WIDESCREEN: the 16:9 mode for the re-release data, which fits the
+    # 960x544 panel exactly.
+    target_compile_definitions(${exe} PRIVATE VITA_GAME_DIR="${game}" ECS_WIDESCREEN)
+    set_source_files_properties(${SRC_DIR}/platforms/third_party/zstddeclib.c
+        PROPERTIES COMPILE_OPTIONS "-w")
 
     # -fsigned-char: `char` is unsigned on ARM but signed on the x86 the
     # original Watcom binary targeted, and the engine keeps signed data in
