@@ -2,6 +2,23 @@
 
 Decompilation and portable C99 reimplementation of **Ecstatica 1 & 2**, the 1994/1997 ellipsoid-rendered adventure games by Andrew Spencer Studios.
 
+## Buy the games
+
+Both games are back on sale, more than 30 years after the original Ecstatica.
+SNEG and Andrew Spencer Studios release them on **26 October 2026**. It is the
+first digital release of Ecstatica II. This project needs the game data, so
+buying the games is how you get it, and it supports the people who made them.
+
+| Game | GOG (DRM-free) | Steam |
+|---|---|---|
+| Ecstatica (1994) | [gog.com/game/ecstatica](https://www.gog.com/en/game/ecstatica) | [store.steampowered.com/app/4834840](https://store.steampowered.com/app/4834840/Ecstatica/) |
+| Ecstatica II (1997) | [gog.com/game/ecstatica_2](https://www.gog.com/en/game/ecstatica_2) | [store.steampowered.com/app/4834850](https://store.steampowered.com/app/4834850/Ecstatica_II/) |
+
+The GOG version has no DRM. On Steam there are free demos of both games, and
+this project runs from the re-release files as installed (see [Data Folder](#data-folder)).
+
+## Overview
+
 Primary reverse-engineering target is `E2WIN95.EXE` (Ecstatica 2 Win95 build, which includes high-res mode). Ecstatica 1 is a secondary target and runs from the same binary — game version is auto-detected at runtime.
 
 The goal is a single native executable that runs both games on modern systems (macOS, Linux, Windows) using the original game data.
@@ -150,6 +167,15 @@ Game data is not committed. Place original game files under `data/`:
 * `data/e1/`      — Ecstatica 1 bundled DOS (320×200)
 * `data/e1-dos/`  — Ecstatica 1 original DOS release (320×200)
 * `data/e2/`      — Ecstatica 2 Win95 (640×480) + DOS (320×200)
+
+The modern re-release folders (`Code/`, `Views/`, `Graphics/`, `Text/`) work
+as they are installed: point the game at the folder that holds `Code/`.
+Sound effects, speech and MIDI music come from its `Audio/` folder, and its
+bundled GeneralUser GS soundfont plays the music on Linux, web, Android and iOS.
+It also runs in 16:9 on desktop and PS Vita: the original 4:3 view stays in the
+middle and the re-release's wider renders of each camera fill the sides. Switch
+back to 4:3 in Enhanced menu → Aspect Ratio, or with `widescreen = 0` in
+`ecstatica.cfg`.
 
 `.FAN` archives hold game resources (actors, graphics, scripts).
 
