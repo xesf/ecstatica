@@ -137,5 +137,18 @@ Code map of the Software background (all in `Ecstatica II.exe`):
 | `sub_14013A9A0` | Adds a generated patch/strip |
 | `sub_140146430`, `sub_14014B330`, `sub_14014FFE0`, `sub_140151030`, `sub_14013E080` | Generators calling the two above: the per-material scenery (grass, plants, trees, still to be identified) |
 
-Not yet traced: which generator draws what, and the per-material surface
-rules.
+`sub_140146430` draws one element face. It picks the E2 texture slot from
+the face normal: 0 = -Z side, 1 = +Z side, 2 = -X side, 3 = +X side,
+4 = top, 5 = bottom, 6 = diagonal face. A slot >= 0 is a texture (records
+of 0x4018 bytes, a 128x128 image and header). Slot -1 falls to a switch on
+material (E2's executable):
+
+| Materials | Path |
+|---|---|
+| 0-3, 9, 10, 12, 14, 15, 18, 20, 22, 23 | Plain surface |
+| 4, 11, 17, 19, 21, 24-29 | Patterned surface; 24-29 take parameters from a 6-entry table at `0x140339230` |
+| 5, 13 | Generator adding ellipsoids (5 is the grass footstep material) |
+| 6, 7, 16 | Own paths, not identified yet |
+| 8 | Nothing drawn |
+
+Not yet traced: what each path draws. E1's executable has its own table.
