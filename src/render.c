@@ -353,8 +353,6 @@ void render_ellipsoid(part_t *part, int plane) {
 
 /* Only around the camera: distant cells pile into a wall that hides the view. */
 #define MAP_VIEW_RADIUS 26
-/* Caps a skirt toward a much lower neighbour. */
-#define MAP_SKIRT_MAX   (12 << 7)
 
 static render_map_vertex_t *s_map_verts;
 static int  s_map_count;
@@ -377,50 +375,118 @@ static void map_push(float x, float y, float z, const uint8_t rgb[3]) {
     v->pad = 0;
 }
 
-static void map_quad(float x0, float z0, float x1, float z1,
-                     float y00, float y10, float y11, float y01,
-                     const uint8_t rgb[3]) {
-    map_push(x0, y00, z0, rgb); map_push(x1, y10, z0, rgb); map_push(x1, y11, z1, rgb);
-    map_push(x0, y00, z0, rgb); map_push(x1, y11, z1, rgb); map_push(x0, y01, z1, rgb);
-}
+/* Average top-face colour of each material, measured from the pre-rendered
+ * views: the --pointcloud reconstruction puts every background pixel back in
+ * the world, and the ones resting on a block's top are averaged per material.
+ * Unmeasured materials stay grey. */
+static const uint8_t e1_material_rgb[][3] = {
+    {  79, 51, 23 }, {  71, 76, 61 }, {  39, 30, 14 }, {  68, 62, 25 },
+    {  36, 34, 32 }, {  82, 51, 23 }, {  99, 78, 60 }, {  17, 17, 18 },
+    {  60, 60, 60 }, {  36, 25,  8 }, {  42, 46, 17 },
+};
+static const uint8_t e2_material_rgb[][3] = {
+    {  94, 37, 14 }, {  60, 60, 60 }, {  98, 38,  9 }, {  90, 47, 19 },
+    {  54, 39, 52 }, {  60, 60, 60 }, {  69, 27, 15 }, {  60, 60, 60 },
+    {  23, 17, 20 }, {  71, 31, 18 }, {  72, 40,  9 }, {  60, 60, 60 },
+    { 111, 59, 21 }, {  77, 37, 27 }, {  87, 34,  6 }, {  93, 42,  0 },
+    {  98, 56, 53 }, {  88, 30, 11 }, {  90, 41, 24 }, {  60, 29, 24 },
+    {  60, 60, 60 }, {  81, 24,  3 }, { 131, 52, 10 }, {  60, 60, 60 },
+    {  60, 60, 60 }, {  60, 60, 60 }, {  60, 60, 60 }, {  10,  0,  0 },
+    {   5,  4,  6 }, {  66, 27, 15 },
+};
 
-/* Height of a cell's top surface, or INT32_MIN when the cell is empty. */
-static int map_cell_height(int row, int col, int *out_flags) {
-    if (out_flags) *out_flags = 0;
-    if (row < 0 || row >= MAP_GRID || col < 0 || col >= MAP_GRID) return INT32_MIN;
-    uint16_t idx = new_map[row][col];
-    if (idx == 0xFFFF || idx == 0) return INT32_MIN;
-
-    int flags = 0, y = 0, first = 1;
-    for (;;) {
-        if ((int)idx >= top_of_map_elements) break;
-        map_area_element_t *e = &map_elements[idx];
-        if (first) { y = (128 - (int)e->def_height) << height_shift; first = 0; }
-        int code_raw = (uint16_t)e->code_index_p1;
-        if ((code_raw & 0x3FFF) > 0) flags |= 1;   /* action trigger */
-        if (e->camera_index > 0)     flags |= 2;   /* camera zone    */
-        if (e->wanderer_spawn)       flags |= 4;   /* wanderer spawn */
-        if (e->material == 1)        flags |= 8;   /* impassable     */
-        if (code_raw & 0x8000) break;
-        idx++;
+/* Measured colours are averages over lit and shaded texels; lift them. */
+static void material_colour(int material, float shade, uint8_t out[3]) {
+    const uint8_t (*tab)[3] = (game_version == GAME_VERSION_E1) ? e1_material_rgb : e2_material_rgb;
+    int n = (game_version == GAME_VERSION_E1)
+          ? (int)(sizeof(e1_material_rgb) / sizeof(e1_material_rgb[0]))
+          : (int)(sizeof(e2_material_rgb) / sizeof(e2_material_rgb[0]));
+    const uint8_t grey[3] = { 60, 60, 60 };
+    const uint8_t *c = (material >= 0 && material < n) ? tab[material] : grey;
+    for (int i = 0; i < 3; i++) {
+        float v = c[i] * 1.8f * shade;
+        out[i] = (uint8_t)(v > 255.0f ? 255.0f : v);
     }
-    if (out_flags) *out_flags = flags;
-    return y;
 }
 
-/* Colours follow debug_overlay.c, except camera zones: nearly every cell has
- * one, so tinting them hid everything else. */
-static void map_cell_colour(int flags, int y, uint8_t out[3]) {
-    uint8_t r = 105, g = 110, b = 100;
-    if (flags & 1)             { r = 190; g = 60;  b = 60; }   /* action  */
-    else if (flags & 4)        { r = 60;  g = 180; b = 70; }   /* spawn   */
-    else if (flags & 8)        { r = 60;  g = 170; b = 180; }  /* blocked */
+/* A footprint piece in cell-local units (0..512 on x and z), as a convex
+ * polygon. block_config 1 is the whole cell, 2-5 the four diagonal halves, and
+ * from 6 up a mask of quarters (bit 1 +x-z, 2 -x-z, 4 +x+z, 8 -x+z), as
+ * find_map_element reads them. */
+typedef struct { int n; float x[4], z[4]; } map_poly_t;
 
-    float t = 0.55f + 0.45f * (1.0f - (float)(y + (128 << height_shift)) /
-                                       (float)(256 << height_shift));
-    if (t < 0.35f) t = 0.35f;
-    if (t > 1.0f)  t = 1.0f;
-    out[0] = (uint8_t)(r * t); out[1] = (uint8_t)(g * t); out[2] = (uint8_t)(b * t);
+static int map_footprint(int cfg, map_poly_t out[4]) {
+    static const float sq[4][2] = { {0,0}, {512,0}, {512,512}, {0,512} };
+    int n = 0;
+    if (cfg == 1) {
+        out[0].n = 4;
+        for (int i = 0; i < 4; i++) { out[0].x[i] = sq[i][0]; out[0].z[i] = sq[i][1]; }
+        return 1;
+    }
+    if (cfg >= 2 && cfg <= 5) {
+        /* The corner each half leaves out. */
+        static const int skip[6] = { 0, 0, 3, 2, 0, 1 };
+        out[0].n = 3;
+        for (int i = 0, k = 0; i < 4; i++) {
+            if (i == skip[cfg]) continue;
+            out[0].x[k] = sq[i][0]; out[0].z[k] = sq[i][1]; k++;
+        }
+        return 1;
+    }
+    static const struct { int bit; float x0, z0; } quarters[4] = {
+        { 1, 256, 0 }, { 2, 0, 0 }, { 4, 256, 256 }, { 8, 0, 256 },
+    };
+    for (int q = 0; q < 4; q++) {
+        if (!(cfg & quarters[q].bit)) continue;
+        map_poly_t *p = &out[n++];
+        p->n = 4;
+        p->x[0] = quarters[q].x0;       p->z[0] = quarters[q].z0;
+        p->x[1] = quarters[q].x0 + 256; p->z[1] = quarters[q].z0;
+        p->x[2] = quarters[q].x0 + 256; p->z[2] = quarters[q].z0 + 256;
+        p->x[3] = quarters[q].x0;       p->z[3] = quarters[q].z0 + 256;
+    }
+    return n;
+}
+
+/* One map element as a solid prism: its footprint from height2 up to
+ * def_height. Ground blocks (height2 0) only get a short skirt; the rest of
+ * their column is never seen. */
+static void map_prism(float cx, float cz, const map_area_element_t *e) {
+    map_poly_t polys[4];
+    int np = map_footprint(e->block_config, polys);
+    if (!np) return;
+
+    float ytop = (float)((128 - (int)e->def_height) << height_shift);
+    int bottom = e->height2 ? (int)e->height2 : (int)e->def_height - 24;
+    float ybot = (float)((128 - bottom) << height_shift);
+
+    uint8_t top[3], side_x[3], side_z[3], under[3];
+    material_colour(e->material, 1.0f, top);
+    material_colour(e->material, 0.75f, side_x);
+    material_colour(e->material, 0.6f, side_z);
+    material_colour(e->material, 0.4f, under);
+
+    for (int i = 0; i < np; i++) {
+        const map_poly_t *p = &polys[i];
+        for (int k = 1; k + 1 < p->n; k++) {
+            map_push(cx + p->x[0], ytop, cz + p->z[0], top);
+            map_push(cx + p->x[k], ytop, cz + p->z[k], top);
+            map_push(cx + p->x[k + 1], ytop, cz + p->z[k + 1], top);
+            if (e->height2) {
+                map_push(cx + p->x[0], ybot, cz + p->z[0], under);
+                map_push(cx + p->x[k + 1], ybot, cz + p->z[k + 1], under);
+                map_push(cx + p->x[k], ybot, cz + p->z[k], under);
+            }
+        }
+        for (int k = 0; k < p->n; k++) {
+            int j = (k + 1) % p->n;
+            float x0 = cx + p->x[k], z0 = cz + p->z[k];
+            float x1 = cx + p->x[j], z1 = cz + p->z[j];
+            const uint8_t *c = (fabsf(x1 - x0) > fabsf(z1 - z0)) ? side_z : side_x;
+            map_push(x0, ytop, z0, c); map_push(x1, ytop, z1, c); map_push(x1, ybot, z1, c);
+            map_push(x0, ytop, z0, c); map_push(x1, ybot, z1, c); map_push(x0, ybot, z0, c);
+        }
+    }
 }
 
 static void build_map_mesh(void) {
@@ -446,33 +512,15 @@ static void build_map_mesh(void) {
 
     for (int row = r0; row <= r1; row++) {
         for (int col = c0; col <= c1; col++) {
-            int flags;
-            int y = map_cell_height(row, col, &flags);
-            if (y == INT32_MIN) continue;
-
-            float x0 = (float)((col - 64) * MAP_CELL);
-            float z0 = (float)((row - 64) * MAP_CELL);
-            float x1 = x0 + MAP_CELL, z1 = z0 + MAP_CELL;
-            float fy = (float)y;
-
-            uint8_t c[3];
-            map_cell_colour(flags, y, c);
-            map_quad(x0, z0, x1, z1, fy, fy, fy, fy, c);
-
-            /* Skirts on two sides only, so each shared edge is emitted once. */
-            static const int nb[2][2] = { { 0, -1 }, { -1, 0 } };
-            for (int e = 0; e < 2; e++) {
-                int ny = map_cell_height(row + nb[e][0], col + nb[e][1], NULL);
-                int drop = (ny == INT32_MIN) ? (y + MAP_SKIRT_MAX) : ny;
-                if (drop <= y) continue;          /* neighbour is higher or level */
-                if (drop - y > MAP_SKIRT_MAX) drop = y + MAP_SKIRT_MAX;
-                uint8_t sc[3];
-                sc[0] = (uint8_t)(c[0] * 3 / 5);
-                sc[1] = (uint8_t)(c[1] * 3 / 5);
-                sc[2] = (uint8_t)(c[2] * 3 / 5);
-                float d = (float)drop;
-                if (e == 0) map_quad(x0, z0, x1, z0, fy, fy, d, d, sc);
-                else        map_quad(x0, z0, x0, z1, fy, fy, d, d, sc);
+            uint16_t idx = new_map[row][col];
+            if (idx == 0xFFFF) continue;
+            float cx = (float)((col - 64) * MAP_CELL);
+            float cz = (float)((row - 64) * MAP_CELL);
+            /* Every element of the cell's stack, up to the one marked last. */
+            for (; (int)idx < top_of_map_elements; idx++) {
+                const map_area_element_t *e = &map_elements[idx];
+                map_prism(cx, cz, e);
+                if ((uint16_t)e->code_index_p1 & 0x8000) break;
             }
         }
     }

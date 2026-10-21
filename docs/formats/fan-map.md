@@ -61,6 +61,28 @@ E1 element size: 7-10 bytes depending on version. `wanderer_spawn` is implicitly
 
 E2 element size: 21-37 bytes depending on version.
 
+### What the fields hold (E2, version 55)
+
+Measured over the 49,650 elements of the E2 re-release database. The
+re-release keeps every field (34-byte records); the port reads only what the
+game logic needs. Meanings marked *likely* are not yet confirmed in code.
+
+| Field | Values seen | Meaning |
+|---|---|---|
+| height / height2 | 0-255 | Top and bottom of the block (*likely*: floor and ceiling of a stacked block) |
+| block_config | 20 distinct | Block shape (flat, slopes, roof forms) |
+| material | 29 distinct | Surface material |
+| camera_index, jump_camera_index, first reserved pair | camera numbers | Four camera indices per element |
+| unused byte (v >= 21) | 4, 16, 17, 25-29 | Stored by the re-release (v >= 46), default 4; *likely* a second material class |
+| second reserved pair | 0-127 each | The element's own grid column and row |
+| seven reserved words | -1, or 0-11, 59 | *Likely* per-face texture slots (the database has 61 texture names) |
+
+The grid is a 128x128 world plan: each cell points at a stack of elements
+(the last one has bit 0x8000 set in code_index). Coloured by material and
+shaded by height, it shows the world's layout - halls, rooms, walls, towers.
+The re-release's Software background renders the world from this data at any
+resolution and aspect; see [remaster-files.md](remaster-files.md).
+
 ### code_index Field Encoding
 
 The 16-bit `code_index` field packs a code name reference and flags:
