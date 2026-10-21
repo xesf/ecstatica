@@ -119,5 +119,23 @@ carry. What is established so far, from `Ecstatica II.exe`:
 - **Surfaces.** `Graphics/bumpmap*.raw` (128x128) texture the materials;
   `antialia.dat` and the `ErPalLut` LUTs blend in palette space.
 
-Not yet traced: grass, plants and trees (`GRASS1`, `cull_trees`,
-`white_plants`) and the per-material surface rules.
+- **Materials (E2).** A per-material footstep table names them: 0 FOOT,
+  1 WADE2 (water), 2 MUD2, 3 STNSTEP1 (stone), 4 ECHO02A, 5 GRASS1,
+  6 LEAVES1, 7 THUDSM1, 8 MUD1, 9 LEAVES2, 10 SOIL2, 11 ECHO01A, 12 KICK1,
+  13 THUD.
+- **Camera patches** go into a 48-byte-per-camera table (position,
+  rotation, zoom, flags) at `qword_1404F81B0 + 0x6088B8`.
+
+Code map of the Software background (all in `Ecstatica II.exe`):
+
+| Function | Role |
+|---|---|
+| `sub_14013ED20` | Background frame builder; schedules tasks over a background arena |
+| `sub_1401189A0` | `MapAccelEnsure`: map voxelisation, roof entries |
+| `sub_14013A1E0` | Thatch roof from DrawRoof parameters |
+| `sub_14013CBE0` | Adds one generated ellipsoid (used by every generator) |
+| `sub_14013A9A0` | Adds a generated patch/strip |
+| `sub_140146430`, `sub_14014B330`, `sub_14014FFE0`, `sub_140151030`, `sub_14013E080` | Generators calling the two above: the per-material scenery (grass, plants, trees, still to be identified) |
+
+Not yet traced: which generator draws what, and the per-material surface
+rules.
