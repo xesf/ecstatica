@@ -23,6 +23,7 @@
 
 uint16_t new_map[128][128];
 map_area_element_t map_elements[60000];
+int16_t map_element_code2[60000];
 int32_t top_of_map_elements = 0;
 
 int16_t need_draw_graphics;

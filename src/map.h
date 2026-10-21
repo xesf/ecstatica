@@ -27,6 +27,11 @@ typedef struct map_area_element_s {
 
 extern uint16_t new_map[128][128];
 extern map_area_element_t map_elements[60000];
+/* Each element's second code (the extra word, version >= 10), as code index
+ * + 1 like code_index_p1; 0 = none. Kept beside map_elements so the element
+ * keeps the original 12-byte layout. Only the background builder reads it:
+ * these are the original DrawRoof scripts. */
+extern int16_t map_element_code2[60000];
 extern int32_t top_of_map_elements;
 /* supress_events_469BF0 — set while an act is wound forward by complete_act */
 extern int16_t suppress_events;

@@ -3368,8 +3368,12 @@ void merge_new_map(FILE *f) {
         code_index &= 0x3FFF;
         elem->code_index_p1 = code_index | (code_flags & 0xC000);
 
-        if (file_version >= 10)
-            getwLoHi(f);
+        map_element_code2[i] = 0;
+        if (file_version >= 10) {
+            int16_t code2 = getwLoHi(f);
+            if ((code2 & 0x3FFF) != 0x3FFF)
+                map_element_code2[i] = (int16_t)((new_code_name[code2 & 0x3FFF] + 1) & 0x3FFF);
+        }
 
         if (game_version == GAME_VERSION_E2) {
             getwLoHi(f);

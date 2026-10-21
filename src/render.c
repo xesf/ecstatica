@@ -489,6 +489,83 @@ static void map_prism(float cx, float cz, const map_area_element_t *e) {
     }
 }
 
+/* Thatch, measured from E1's roofs in the pre-rendered views. */
+static const uint8_t roof_rgb[3] = { 190, 120, 55 };
+
+static void roof_colour(float shade, uint8_t out[3]) {
+    for (int i = 0; i < 3; i++) {
+        float v = roof_rgb[i] * shade;
+        out[i] = (uint8_t)(v > 255.0f ? 255.0f : v);
+    }
+}
+
+static void map_tri(const float a[3], const float b[3], const float c[3], const uint8_t rgb[3]) {
+    map_push(a[0], a[1], a[2], rgb);
+    map_push(b[0], b[1], b[2], rgb);
+    map_push(c[0], c[1], c[2], rgb);
+}
+
+/* DrawRoof dir dx dz rows width: a pitched roof standing on the element, as
+ * the re-release builds it (Ecstatica II.exe, sub_14013A1E0). The ridge runs
+ * along dir (45 degree steps) for rows x 256 units; the roof is width x 256
+ * across, eaves on both sides, ridge in the middle, 45 degrees (checked
+ * against the thatch in the pre-rendered views). The eaves stand on the
+ * element's top; dx and dz move the roof in 256-unit steps. The re-release covers the slopes in rows of
+ * thatch ellipsoids; here they are two flat slopes and two gable ends. */
+static void map_roof(float bx, float by, float bz, const int p[5]) {
+    double a = (double)(p[0] & 7) * (3.14159265358979 / 4.0);
+    float dir[2]  = { (float)cos(a), (float)sin(a) };
+    float perp[2] = { -dir[1], dir[0] };
+    float len = (float)(p[3] * 256);
+    float wid = (float)(p[4] * 256);
+    float rise = (float)(p[4] * 128);
+
+    float ox = bx + (float)((int8_t)p[1] * 256);
+    float oz = bz + (float)((int8_t)p[2] * 256);
+    float e0[2][3], ridge[2][3], e1[2][3];
+    for (int k = 0; k < 2; k++) {
+        float t = k ? len : 0.0f;
+        float x = ox + dir[0] * t, z = oz + dir[1] * t;
+        e0[k][0] = x;                        e0[k][1] = by;        e0[k][2] = z;
+        ridge[k][0] = x + perp[0] * wid / 2; ridge[k][1] = by - rise;
+        ridge[k][2] = z + perp[1] * wid / 2;
+        e1[k][0] = x + perp[0] * wid;        e1[k][1] = by;        e1[k][2] = z + perp[1] * wid;
+    }
+    uint8_t slope_a[3], slope_b[3], gable[3];
+    roof_colour(1.0f, slope_a);
+    roof_colour(0.8f, slope_b);
+    roof_colour(0.6f, gable);
+    map_tri(e0[0], e0[1], ridge[1], slope_a);  map_tri(e0[0], ridge[1], ridge[0], slope_a);
+    map_tri(e1[0], ridge[0], ridge[1], slope_b); map_tri(e1[0], ridge[1], e1[1], slope_b);
+    map_tri(e0[0], ridge[0], e1[0], gable);
+    map_tri(e0[1], e1[1], ridge[1], gable);
+}
+
+/* Roofs come from the element's second code: the original one-line
+ * DrawRoof scripts (token CT_DRAW_ROOF and five values). */
+static void map_element_roofs(int row, int col, int idx, const map_area_element_t *e) {
+    int code = map_element_code2[idx];
+    if (code <= 0 || code - 1 >= CODE_TAB_SIZE) return;
+    const code_t *c = code_tab[code - 1];
+    if (!c || !token_store) return;
+    const int16_t *t = &token_store[c->token_store_index];
+    for (int i = 0; i < 64 && t[i]; i++) {
+        if (t[i] != CT_DRAW_ROOF) continue;
+        int p[5];
+        for (int k = 0; k < 5; k++) {
+            int v = t[i + 1 + k] & 0x0FFF;
+            p[k] = (v & 0x800) ? v - 0x1000 : v;
+        }
+        float bx = (float)((col - 64) * MAP_CELL);
+        float bz = (float)((row - 64) * MAP_CELL);
+        float by = (float)((128 - (int)e->def_height) << height_shift);
+        DBG_LOG(2, "[ROOF] elem=%d cell=%d,%d h=%d params=%d %d %d %d %d\n",
+                idx, col, row, e->def_height, p[0], p[1], p[2], p[3], p[4]);
+        map_roof(bx, by, bz, p);
+        i += 5;
+    }
+}
+
 static void build_map_mesh(void) {
     int ccol = (view_pos.X >> 9) + 64;
     int crow = (view_pos.Z >> 9) + 64;
@@ -520,6 +597,7 @@ static void build_map_mesh(void) {
             for (; (int)idx < top_of_map_elements; idx++) {
                 const map_area_element_t *e = &map_elements[idx];
                 map_prism(cx, cz, e);
+                map_element_roofs(row, col, idx, e);
                 if ((uint16_t)e->code_index_p1 & 0x8000) break;
             }
         }
