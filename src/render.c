@@ -547,15 +547,16 @@ static void map_prism(float cx, float cz, int idx, const map_area_element_t *e) 
  * (112.5 degrees) from the last and leaning 8.4 degrees more, from upright to
  * about 59 degrees. Here a blade is a thin triangle, and the grid thins out
  * with distance from the camera. */
+/* Both re-release executables share the material switch: 5 and 13 are the
+ * needle shrubs in E1 and E2 alike. */
 static int is_grass_material(int material) {
-    if (game_version == GAME_VERSION_E1) return material == 3 || material == 10;
     return material == 5 || material == 13;
 }
 
-/* Olive, from the grass in E1's pre-rendered views: dark at the root, lit at
- * the tip. */
-static const uint8_t grass_root_rgb[3] = { 46, 50, 4 };
-static const uint8_t grass_tip_rgb[3]  = { 104, 108, 14 };
+/* Needle greens from the shrubs in E1's pre-rendered views: dark at the
+ * root, yellow-lit at the tip. */
+static const uint8_t grass_root_rgb[3] = { 20, 70, 20 };
+static const uint8_t grass_tip_rgb[3]  = { 150, 160, 40 };
 
 static uint32_t grass_rand(uint32_t *s) {
     *s = *s * 0x41C64E6Du + 0x3039u;
@@ -571,7 +572,8 @@ static void map_grass_tuft(float x, float y, float z, const uint8_t base[3], uin
     for (int b = 0; b < 8; b++) {
         float yaw = yaw0 + (float)b * (6.2831853f * 0x5000 / 0x10000);
         float tilt = (float)b * (6.2831853f * 0x180 / 0x4000);
-        float len = 80.0f + (float)(grass_rand(seed) % 96);
+        /* 80..175 is the ellipsoid's half length. */
+        float len = 2.0f * (80.0f + (float)(grass_rand(seed) % 96));
         float dx = cosf(yaw), dz = sinf(yaw);
         /* Up is -Y in the engine. */
         float tipx = x + dx * sinf(tilt) * len;
@@ -616,6 +618,290 @@ static void map_grass(float cx, float cz, int idx, const map_area_element_t *e,
                     float jz = (float)((int)(grass_rand(&seed) & 31) - 16);
                     map_grass_tuft(ax + bx * u + qx * v + jx, y,
                                    az + bz * u + qz * v + jz, base, &seed);
+                }
+            }
+        }
+        /* The face renderer runs on every face, so a raised shrub block is
+         * covered on its sides too. */
+        if (!e->height2) continue;
+        float ybot = (float)((128 - (int)e->height2) << height_shift);
+        for (int k = 0; k < p->n; k++) {
+            int j = (k + 1) % p->n;
+            float x0 = cx + p->x[k], z0 = cz + p->z[k];
+            float ex = cx + p->x[j] - x0, ez = cz + p->z[j] - z0;
+            for (int gi = 0; gi < steps; gi++) {
+                for (int gh = 0; gh < steps / 2; gh++) {
+                    float u = ((float)gi + 0.5f) / steps;
+                    float h = ((float)gh + 0.5f) / (steps / 2);
+                    map_grass_tuft(x0 + ex * u, y + (ybot - y) * h, z0 + ez * u, base, &seed);
+                }
+            }
+        }
+    }
+}
+
+/* ── Plants ──
+ * Materials 2, 9, 10 and 20 grow a plant on every top-face triangle
+ * (Ecstatica.exe: decoration switch of sub_14013A460, generator
+ * sub_140143D40 and the recursive branch sub_1401457C0). A plant is a chain
+ * of ellipsoid segments, each 1/32 smaller than the last and starting at the
+ * previous one's centre; every fifth segment splits off three branches 120
+ * degrees apart, tilted 67.5 degrees; twigs under 0xB0 carry three needles.
+ * Sizes 0x600+ are trees, under 0x500 bushes that split at the root. Here an
+ * ellipsoid is a six-triangle diamond and a needle one triangle. */
+typedef struct { float m[3][3]; float p[3]; } plant_frame_t;
+
+#define ANGLE_RAD(a) ((float)((a) & 0xFFFF) * (6.2831853f / 65536.0f))
+
+/* A big tree is tens of thousands of ellipsoids; plants are built nearest
+ * first until the vertex budget runs out. */
+#define PLANT_RADIUS 12
+#define PLANT_VERT_BUDGET (3 * 1024 * 1024)
+
+static const uint8_t plant_stem_rgb[3] = { 60, 48, 22 };
+
+static int plant_vert_end;
+/* The original's level of detail, 64 = full: out of 64 segments this many
+ * are drawn (the rest lengthen the next one), and needles grow with it. */
+static int plant_lod;
+
+/* Columns of m are the local axes; local -Z grows up (world -Y). */
+static void plant_rotate(plant_frame_t *f, int axis, int angle) {
+    if (!(angle & 0xFFFF)) return;
+    float c = cosf(ANGLE_RAD(angle)), s = sinf(ANGLE_RAD(angle));
+    int a = axis == 0 ? 1 : 0, b = axis == 2 ? 1 : 2;
+    for (int r = 0; r < 3; r++) {
+        float u = f->m[r][a], v = f->m[r][b];
+        f->m[r][a] = u * c + v * s;
+        f->m[r][b] = v * c - u * s;
+    }
+}
+
+static void plant_point(const plant_frame_t *f, float lx, float ly, float lz, float out[3]) {
+    for (int r = 0; r < 3; r++)
+        out[r] = f->p[r] + f->m[r][0] * lx + f->m[r][1] * ly + f->m[r][2] * lz;
+}
+
+static int plant_full(void) {
+    return s_map_count >= plant_vert_end;
+}
+
+/* An ellipsoid as a diamond: tips along local Z, a three-point waist. */
+static void plant_ellipsoid(const plant_frame_t *f, float off, float rxy, float rz,
+                            const uint8_t rgb[3]) {
+    if (rxy <= 0.0f || plant_full()) return;
+    float top[3], bot[3], ring[3][3];
+    plant_point(f, 0, 0, off - rz, top);
+    plant_point(f, 0, 0, off + rz, bot);
+    plant_point(f, rxy, 0, off, ring[0]);
+    plant_point(f, -0.5f * rxy,  0.866f * rxy, off, ring[1]);
+    plant_point(f, -0.5f * rxy, -0.866f * rxy, off, ring[2]);
+    uint8_t shade[3][3];
+    for (int k = 0; k < 3; k++) {
+        shade[0][k] = rgb[k];
+        shade[1][k] = (uint8_t)(rgb[k] * 0.75f);
+        shade[2][k] = (uint8_t)(rgb[k] * 0.5f);
+    }
+    for (int i = 0; i < 3; i++) {
+        const float *a = ring[i], *b = ring[(i + 1) % 3];
+        map_push(top[0], top[1], top[2], shade[i]);
+        map_push(a[0], a[1], a[2], shade[i]);
+        map_push(b[0], b[1], b[2], shade[i]);
+        map_push(bot[0], bot[1], bot[2], shade[2]);
+        map_push(b[0], b[1], b[2], shade[2]);
+        map_push(a[0], a[1], a[2], shade[2]);
+    }
+}
+
+static void plant_needle(const plant_frame_t *f, float w, float len, uint32_t *seed) {
+    if (plant_full()) return;
+    float a[3], b[3], tip[3];
+    plant_point(f, -w, 0, 0, a);
+    plant_point(f,  w, 0, 0, b);
+    plant_point(f, 0, 0, -2.0f * len, tip);
+    float shade = 0.8f + (float)(grass_rand(seed) % 40) / 100.0f;
+    uint8_t root[3], end[3];
+    for (int k = 0; k < 3; k++) {
+        float r = grass_root_rgb[k] * shade, t = grass_tip_rgb[k] * shade;
+        root[k] = (uint8_t)(r > 255 ? 255 : r);
+        end[k] = (uint8_t)(t > 255 ? 255 : t);
+    }
+    map_push(a[0], a[1], a[2], root);
+    map_push(b[0], b[1], b[2], root);
+    map_push(tip[0], tip[1], tip[2], end);
+}
+
+/* The child's frame: at the parent's ellipsoid centre, turned by the child's
+ * own angles (X then Z, as sub_140133760 applies them). */
+static plant_frame_t plant_child(const plant_frame_t *parent, float parent_off,
+                                 int pitch, int spin) {
+    plant_frame_t f = *parent;
+    plant_point(parent, 0, 0, parent_off, f.p);
+    plant_rotate(&f, 0, pitch);
+    plant_rotate(&f, 2, spin);
+    return f;
+}
+
+static void plant_branch(const plant_frame_t *start, int size, int age, int index,
+                         uint32_t *seed) {
+    plant_frame_t parent = *start;
+    float parent_off = 0.0f;
+    int first = index, skipped = 0;
+    /* Needles: the original's count (c * 59 + 32) / 64 + 5 of 64, and
+     * 8 x 8 x 64 close up, up to 24 x 24 x 96 far away. */
+    int needles = (plant_lod * 59 + 32) / 64 + 5;
+    float needle_w = (float)((64 - plant_lod) / 4 + 8);
+    float needle_len = (float)((64 - plant_lod) / 2 + 64);
+    for (;; index++) {
+        int fifth = index % 5;
+        if (index && !fifth) {
+            int child = size >= 0x801 ? 0x400
+                      : size >= 0x100 ? size / 2 + (size < 0x180 ? (0x180 - size) / 2 : 0)
+                      : 0;
+            for (int k = 0; k < 3 && child && !plant_full(); k++) {
+                plant_frame_t knob = plant_child(&parent, parent_off, 0x3000, k * 0x10000 / 3);
+                plant_ellipsoid(&knob, 0.0f, (float)(child >> 4), (float)(child >> 5),
+                                plant_stem_rgb);
+                plant_branch(&knob, child, age, 0, seed);
+            }
+            if (size >= 0xC9 && size <= 0x11F) size -= size / 4;
+        }
+        if (age >= 0x2EF && size <= 0xAF &&
+            (needles > 63 || ((unsigned)(needles * index) & 63) < (unsigned)needles)) {
+            int pitch = size <= 0x8F ? (size << 9) + 0x1000 : 0x3000;
+            for (int k = 0; k < 3; k++) {
+                plant_frame_t leaf = plant_child(&parent, parent_off, pitch, k * 0x10000 / 3);
+                plant_needle(&leaf, needle_w, needle_len, seed);
+            }
+        }
+        if (age < 0x2EE && size >= 0x1C1 && size < 0x200) size = 0;
+        size -= size / 32;
+        int spin = size <= 0x9F ? (int)(grass_rand(seed) << 1) : fifth ? 0 : 0x2AAA;
+        plant_frame_t seg = plant_child(&parent, parent_off, 0, spin);
+        float off = -(float)((size >> 3) / 2);
+        skipped++;
+        if (plant_lod >= 64 || size < 0x80 ||
+            ((unsigned)((index - first) * plant_lod) & 63) < (unsigned)plant_lod) {
+            float len = (float)(size >> 3) * (float)(skipped < 4 ? skipped : 4);
+            plant_ellipsoid(&seg, off, (float)(size >> 4), len, plant_stem_rgb);
+            skipped = 0;
+        }
+        parent = seg;
+        parent_off = off;
+        if (size < 0x80 || plant_full()) return;
+        age += size >> 8;
+    }
+}
+
+static void map_plant(float x, float y, float z, int size, uint32_t *seed) {
+    float yaw = ANGLE_RAD(grass_rand(seed));
+    float c = cosf(yaw), s = sinf(yaw);
+    plant_frame_t root = { { { c, -s, 0 }, { 0, 0, 1 }, { -s, -c, 0 } }, { x, y, z } };
+    plant_ellipsoid(&root, 0.0f, (float)(size >> 4), (float)(size >> 3), plant_stem_rgb);
+    int age = 0;
+    for (int s2 = 0x2000; s2 > size; ) {
+        s2 -= s2 / 32;
+        age += s2 >> 8;
+    }
+    plant_branch(&root, size, age, size < 0x500 ? 5 : 0, seed);
+}
+
+static int is_plant_material(int material) {
+    return material == 2 || material == 9 || material == 10 || material == 20;
+}
+
+/* Materials that count as open ground next to a plant: the bit set
+ * 0x3FAF29F9 the original tests on the neighbouring elements. Water and the
+ * plant materials themselves are not in it. */
+static int is_open_ground(int material) {
+    return material < 30 && ((0x3FAF29F9u >> material) & 1);
+}
+
+/* Bushes of 9 and 10 are smaller where the patch meets open ground. */
+static int plant_at_edge(int row, int col) {
+    for (int dr = -1; dr <= 1; dr++) {
+        for (int dc = -1; dc <= 1; dc++) {
+            int r = row + dr, c = col + dc;
+            if ((!dr && !dc) || r < 0 || c < 0 || r >= MAP_GRID || c >= MAP_GRID) continue;
+            uint16_t i = new_map[r][c];
+            if (i == 0xFFFF) return 1;
+            while ((int)i + 1 < top_of_map_elements &&
+                   !((uint16_t)map_elements[i].code_index_p1 & 0x8000))
+                i++;
+            if (is_open_ground(map_elements[i].material)) return 1;
+        }
+    }
+    return 0;
+}
+
+static int plant_size(int material, int edge, uint32_t *seed) {
+    uint32_t r = grass_rand(seed);
+    switch (material) {
+    case 2:  return 0x600 + (int)(r & 0x3FF);
+    case 20: return 0x400 + (int)(r & 0x1FF);
+    case 9:  return edge ? 0x100 + (int)(r & 0x1FF) : 0x200 + (int)(r & 0x3FF);
+    default: return edge ? 0x80 + (int)(r & 0x7F) : 0x100 + (int)(r & 0xFF);
+    }
+}
+
+static int point_in_poly(const map_poly_t *p, float x, float z) {
+    int in = 0;
+    for (int i = 0, j = p->n - 1; i < p->n; j = i++) {
+        if ((p->z[i] > z) != (p->z[j] > z) &&
+            x < (p->x[j] - p->x[i]) * (z - p->z[i]) / (p->z[j] - p->z[i]) + p->x[i])
+            in = !in;
+    }
+    return in;
+}
+
+/* One plant per top-face triangle: the cell's eight triangles fan from its
+ * centre to each corner and edge midpoint; the plant stands a quarter of the
+ * way along both edges from the centre. Nothing grows under an element that
+ * is not open ground. */
+static void map_plants(int row, int col, int idx, const map_area_element_t *e,
+                       const map_area_element_t *above) {
+    if (above && !is_open_ground(above->material)) return;
+    static const float rim[8][2] = {
+        {0,0}, {256,0}, {512,0}, {512,256}, {512,512}, {256,512}, {0,512}, {0,256}
+    };
+    float cx = (float)((col - 64) * MAP_CELL), cz = (float)((row - 64) * MAP_CELL);
+    map_poly_t polys[4];
+    int np = map_footprint(e->block_config, polys);
+    float y = (float)((128 - (int)e->def_height) << height_shift);
+    uint32_t seed = (uint32_t)idx * 0x9E3779B1u;
+    seed ^= seed >> 15;
+    seed *= 0x85EBCA77u;
+    seed ^= seed >> 13;
+    int edge = (e->material == 9 || e->material == 10) && plant_at_edge(row, col);
+    for (int t = 0; t < 8; t++) {
+        const float *a = rim[t], *b = rim[(t + 1) & 7];
+        float px = 256.0f + (a[0] - 256.0f) / 4 + (b[0] - 256.0f) / 4;
+        float pz = 256.0f + (a[1] - 256.0f) / 4 + (b[1] - 256.0f) / 4;
+        float gx = (256.0f + a[0] + b[0]) / 3, gz = (256.0f + a[1] + b[1]) / 3;
+        int inside = 0;
+        for (int i = 0; i < np && !inside; i++) inside = point_in_poly(&polys[i], gx, gz);
+        if (!inside) continue;
+        map_plant(cx + px, y, cz + pz, plant_size(e->material, edge, &seed), &seed);
+    }
+}
+
+/* Every plant cell within PLANT_RADIUS, ring by ring outwards. */
+static void map_all_plants(int crow, int ccol) {
+    plant_vert_end = s_map_count + PLANT_VERT_BUDGET;
+    for (int ring = 0; ring <= PLANT_RADIUS && !plant_full(); ring++) {
+        plant_lod = ring <= 2 ? 64 : 128 / ring;
+        for (int row = crow - ring; row <= crow + ring; row++) {
+            for (int col = ccol - ring; col <= ccol + ring; col++) {
+                if (abs(row - crow) != ring && abs(col - ccol) != ring) continue;
+                if (row < 0 || col < 0 || row >= MAP_GRID || col >= MAP_GRID) continue;
+                uint16_t idx = new_map[row][col];
+                if (idx == 0xFFFF) continue;
+                for (; (int)idx < top_of_map_elements; idx++) {
+                    const map_area_element_t *e = &map_elements[idx];
+                    int last = ((uint16_t)e->code_index_p1 & 0x8000) != 0;
+                    if (is_plant_material(e->material))
+                        map_plants(row, col, idx, e, last ? NULL : &map_elements[idx + 1]);
+                    if (last) break;
                 }
             }
         }
@@ -738,6 +1024,8 @@ static void build_map_mesh(void) {
             }
         }
     }
+    map_all_plants(crow, ccol);
+    DBG_LOG(2, "[MAP3D] verts=%d\n", s_map_count);
 }
 
 /* ── Frame ────────────────────────────────────────────────── */

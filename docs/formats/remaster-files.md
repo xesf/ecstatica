@@ -158,11 +158,38 @@ decoration, every random value from the generator's LCG (`state * 0x41C64E6D
 | Material | Decoration |
 |---|---|
 | 1, 22 | Own paths, not identified yet |
-| 2 | Pieces of size 0x600-0x9FF |
-| 9, 10 | Depends on the neighbouring materials (bit set `0x3FAF29F9`) |
+| 2 | Tree, size 0x600-0x9FF |
+| 9 | Bush, 0x200-0x5FF; 0x100-0x2FF where a neighbour is open ground |
+| 10 | Bush, 0x100-0x1FF; 0x80-0xFF or 0xC0-0x17F at the patch edge |
 | 12 | A radial fan of ellipsoids: random size 0x200-0x5FF and start angle, each next leaf turned 0x5000 and 0x80 smaller, down to 0x88 - a plant |
 | 14, 15 | `sub_14014F8D0`, variant 1 / 2 |
-| 20 | Pieces of size 0x400-0x5FF |
+| 20 | Tree, size 0x400-0x5FF |
+
+"Open ground" is a neighbouring element whose material is in the bit set
+`0x3FAF29F9`; water (1) and the plant materials are not.
+
+Trees and bushes (2, 9, 10, 20) come from one generator, traced in
+`Ecstatica.exe` (E1; the E2 executable has the same code): `sub_140143D40`
+plants one per top-face triangle and `sub_1401457C0` grows it.
+
+- The root is an ellipsoid of `size/16 x size/16 x size/8` at the plant's
+  point, turned to a random heading.
+- The stem is a chain of segments. Each one is 1/32 smaller than the last,
+  is `size/16 x size/16 x size/8`, and starts at the centre of the previous
+  one. Local -Z points up, so stems are straight.
+- Every fifth segment splits off three branches 120 degrees apart, tilted
+  0x3000 (67.5 degrees). A branch is 0x400 off a stem of 0x801 or more,
+  `size/2` (at least 0xC0) off one of 0x100-0x800, and none below that.
+  Bushes under 0x500 start splitting at the root.
+- Twigs of 0xAF or less carry three needles, tilted 67.5 degrees, or less on
+  the thinnest twigs. Near the camera a needle is 8 x 8 x 64.
+- The chain ends when a segment drops under 0x80.
+- With distance the generator draws fewer segments (each drawn one is
+  stretched over the skipped ones, up to 4) and fewer but larger needles,
+  up to 24 x 24 x 96.
+
+The GL 3D map (`map_all_plants` in `src/render.c`) grows the same plants
+from triangles: diamond ellipsoids, one triangle per needle.
 
 Grass (materials 5 and 13) is in the first switch. Each top-face triangle is
 filled on a 16-step grid in its own coordinates (i + j <= 15), every point
