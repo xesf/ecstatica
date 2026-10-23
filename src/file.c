@@ -2614,14 +2614,15 @@ static int16_t add_name_find_index_ex(const char *name, name_text_t *names, int 
     return -1;
 }
 
-static int16_t add_name_find_index(const char *name, name_text_t *names, int max_count) {
-    return add_name_find_index_ex(name, names, max_count, NULL);
-}
-
 /* file_add_part_name  E1: 0x43C200 | E2: 0x44655C */
+/* Only a new name's slots are cleared: the re-release loads one file per
+ * actor, each with its own name table, and clearing an existing name would
+ * cut that part out of every actor already loaded. */
 int16_t add_part_name(const char *name) {
-    int16_t idx = add_name_find_index(name, part_names, PART_TAB_SIZE);
+    bool is_new = false;
+    int16_t idx = add_name_find_index_ex(name, part_names, PART_TAB_SIZE, &is_new);
     if (idx < 0) { DBG_LOG(1, "[NAME] add_part_name failed for '%s'\n", name); return -1; }
+    if (!is_new) return idx;
     for (actor_t *actor = root_thing; actor; actor = actor->next_in_display_list) {
         if (actor->_PartTab)
             actor->_PartTab->field_0[idx] = NULL;
@@ -2697,7 +2698,9 @@ int16_t add_texture_name(const char *name) {
 
 /* file_add_point_name  E1: 0x43C9A4 | E2: 0x446D04 */
 int16_t add_point_name(const char *name) {
-    int16_t idx = add_name_find_index(name, point_names, POINT_TAB_SIZE);
+    bool is_new = false;
+    int16_t idx = add_name_find_index_ex(name, point_names, POINT_TAB_SIZE, &is_new);
+    if (!is_new) return idx;
     for (actor_t *actor = root_thing; actor; actor = actor->next_in_display_list) {
         if (actor->_PointTab)
             actor->_PointTab->field_0[idx] = NULL;
@@ -2707,7 +2710,9 @@ int16_t add_point_name(const char *name) {
 
 /* file_add_triangle_name  E1: 0x43CA8C | E2: 0x446DEC */
 int16_t add_triangle_name(const char *name) {
-    int16_t idx = add_name_find_index(name, triangle_names, TRIANGLE_TAB_SIZE);
+    bool is_new = false;
+    int16_t idx = add_name_find_index_ex(name, triangle_names, TRIANGLE_TAB_SIZE, &is_new);
+    if (!is_new) return idx;
     for (actor_t *actor = root_thing; actor; actor = actor->next_in_display_list) {
         if (actor->_TriangleTab)
             actor->_TriangleTab->field_0[idx] = NULL;
