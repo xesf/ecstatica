@@ -449,6 +449,10 @@ static void draw_map3d(void) {
     glUseProgram(G.prog_map);
     set_uniform_m4(G.prog_map, "u_view", render_frame.view);
     set_uniform_m4(G.prog_map, "u_proj", render_frame.proj);
+    bind_tex(0, GL_TEXTURE_2D, G.tex_palette);
+    set_uniform_i(G.prog_map, "u_palette", 0);
+    bind_tex(1, GL_TEXTURE_2D_ARRAY, G.tex_array);
+    set_uniform_i(G.prog_map, "u_textures", 1);
 
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
@@ -888,6 +892,12 @@ static void build_geometry(void) {
         glEnableVertexAttribArray(1);
         glVertexAttribPointer(1, 3, GL_UNSIGNED_BYTE, GL_TRUE, stride,
                               (void *)(size_t)offsetof(render_map_vertex_t, rgb));
+        glEnableVertexAttribArray(2);
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride,
+                              (void *)(size_t)offsetof(render_map_vertex_t, uv));
+        glEnableVertexAttribArray(3);
+        glVertexAttribIPointer(3, 1, GL_INT, stride,
+                               (void *)(size_t)offsetof(render_map_vertex_t, layer));
     }
 
     glBindVertexArray(0);

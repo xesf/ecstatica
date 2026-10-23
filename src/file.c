@@ -3309,14 +3309,33 @@ void read_textures(FILE *f) {
     int tex_count = 0;
     while (sentinel && sentinel != EOF) {
         tex_count++;
-        (void)getwLoHi(f);   /* 2 bytes LE: texture name index */
+        int16_t raw_index = getwLoHi(f);
         (void)getwLoHi(f);   /* 2 bytes LE: flags/type, OR'd with 1 */
         int16_t width = getwLoHi(f);
         int16_t height = getwLoHi(f);
 
         int pixel_size = width * height;
-        if (pixel_size > 0)
-            fseek(f, pixel_size, SEEK_CUR);
+        int16_t name_index = (raw_index >= 0 && raw_index < TEXTURE_TAB_SIZE)
+                           ? new_texture_name[raw_index] : -1;
+        texture_t *tex = NULL;
+        if (name_index >= 0 && name_index < TEXTURE_TAB_SIZE && !texture_tab[name_index] &&
+            pixel_size > 0 && pixel_size < 0x100000)
+            tex = (texture_t *)calloc(1, sizeof(texture_t));
+        if (tex)
+            tex->texture_data = (char *)malloc((size_t)pixel_size);
+        if (tex && tex->texture_data) {
+            fread_ignore(tex->texture_data, 1, (size_t)pixel_size, f);
+            tex->textur_index = name_index;
+            tex->x_size = width;
+            tex->y_size = height;
+            texture_tab[name_index] = tex;
+            tex->next = texture_list;
+            texture_list = tex;
+        } else {
+            if (tex) free(tex);
+            if (pixel_size > 0)
+                fseek(f, pixel_size, SEEK_CUR);
+        }
 
         sentinel = fgetc(f);
     }
@@ -3379,8 +3398,15 @@ void merge_new_map(FILE *f) {
             getwLoHi(f);
             getwLoHi(f);
 
-            for (int j = 0; j < 7; ++j)
-                getwLoHi(f);
+            for (int j = 0; j < 7; ++j) {
+                int16_t slot = getwLoHi(f);
+#ifdef ECS_ENABLE_GL
+                map_element_tex[i][j] = (slot >= 0 && slot < TEXTURE_TAB_SIZE)
+                                      ? new_texture_name[slot] : -1;
+#else
+                (void)slot;
+#endif
+            }
 
             elem->wanderer_spawn = fgetc(f);
         } else {

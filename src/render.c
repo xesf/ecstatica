@@ -360,7 +360,8 @@ static int  s_map_cap;
 static int  s_map_built_for = -1;
 static int  s_map_centre_row = -9999, s_map_centre_col = -9999;
 
-static void map_push(float x, float y, float z, const uint8_t rgb[3]) {
+static void map_push_tex(float x, float y, float z, const uint8_t rgb[3],
+                         float tu, float tv, int layer) {
     if (s_map_count >= s_map_cap) {
         int cap = s_map_cap ? s_map_cap * 2 : 65536;
         render_map_vertex_t *g = (render_map_vertex_t *)realloc(s_map_verts,
@@ -371,8 +372,14 @@ static void map_push(float x, float y, float z, const uint8_t rgb[3]) {
     }
     render_map_vertex_t *v = &s_map_verts[s_map_count++];
     v->pos[0] = x; v->pos[1] = y; v->pos[2] = z;
+    v->uv[0] = tu; v->uv[1] = tv;
     v->rgb[0] = rgb[0]; v->rgb[1] = rgb[1]; v->rgb[2] = rgb[2];
     v->pad = 0;
+    v->layer = layer;
+}
+
+static void map_push(float x, float y, float z, const uint8_t rgb[3]) {
+    map_push_tex(x, y, z, rgb, 0.0f, 0.0f, -1);
 }
 
 /* Average top-face colour of each material, measured from the pre-rendered
@@ -448,10 +455,30 @@ static int map_footprint(int cfg, map_poly_t out[4]) {
     return n;
 }
 
+/* E2 face textures: slot by face direction, as sub_140146430 picks it. The
+ * texture layer, or -1 when the face is drawn from its material. */
+enum { SLOT_NEG_Z, SLOT_POS_Z, SLOT_NEG_X, SLOT_POS_X, SLOT_TOP, SLOT_BOTTOM, SLOT_DIAG };
+
+static int map_face_layer(int idx, int slot) {
+#ifdef ECS_ENABLE_GL
+    if (game_version != GAME_VERSION_E2) return -1;
+    int16_t tex = map_element_tex[idx][slot];
+    if (tex < 0 || tex >= TEXTURE_TAB_SIZE) return -1;
+    check_texture_loaded(tex);
+    return render_gl_texture_layer(tex);
+#else
+    (void)idx; (void)slot;
+    return -1;
+#endif
+}
+
+/* Texture scale: 128 texels to a 512-unit cell. */
+#define MAP_TEXEL 4.0f
+
 /* One map element as a solid prism: its footprint from height2 up to
  * def_height. Ground blocks (height2 0) only get a short skirt; the rest of
  * their column is never seen. */
-static void map_prism(float cx, float cz, const map_area_element_t *e) {
+static void map_prism(float cx, float cz, int idx, const map_area_element_t *e) {
     map_poly_t polys[4];
     int np = map_footprint(e->block_config, polys);
     if (!np) return;
@@ -465,26 +492,49 @@ static void map_prism(float cx, float cz, const map_area_element_t *e) {
     material_colour(e->material, 0.75f, side_x);
     material_colour(e->material, 0.6f, side_z);
     material_colour(e->material, 0.4f, under);
+    static const uint8_t lit[3] = { 255, 255, 255 }, lit_x[3] = { 200, 200, 200 },
+                         lit_z[3] = { 165, 165, 165 }, lit_under[3] = { 110, 110, 110 };
+
+    int top_layer = map_face_layer(idx, SLOT_TOP);
+    int bot_layer = e->height2 ? map_face_layer(idx, SLOT_BOTTOM) : -1;
 
     for (int i = 0; i < np; i++) {
         const map_poly_t *p = &polys[i];
         for (int k = 1; k + 1 < p->n; k++) {
-            map_push(cx + p->x[0], ytop, cz + p->z[0], top);
-            map_push(cx + p->x[k], ytop, cz + p->z[k], top);
-            map_push(cx + p->x[k + 1], ytop, cz + p->z[k + 1], top);
+            const int t3[3] = { 0, k, k + 1 };
+            const uint8_t *tc = top_layer >= 0 ? lit : top;
+            for (int m = 0; m < 3; m++) {
+                float x = cx + p->x[t3[m]], z = cz + p->z[t3[m]];
+                map_push_tex(x, ytop, z, tc, x / MAP_TEXEL, z / MAP_TEXEL, top_layer);
+            }
             if (e->height2) {
-                map_push(cx + p->x[0], ybot, cz + p->z[0], under);
-                map_push(cx + p->x[k + 1], ybot, cz + p->z[k + 1], under);
-                map_push(cx + p->x[k], ybot, cz + p->z[k], under);
+                const int b3[3] = { 0, k + 1, k };
+                const uint8_t *bc = bot_layer >= 0 ? lit_under : under;
+                for (int m = 0; m < 3; m++) {
+                    float x = cx + p->x[b3[m]], z = cz + p->z[b3[m]];
+                    map_push_tex(x, ybot, z, bc, x / MAP_TEXEL, z / MAP_TEXEL, bot_layer);
+                }
             }
         }
         for (int k = 0; k < p->n; k++) {
             int j = (k + 1) % p->n;
             float x0 = cx + p->x[k], z0 = cz + p->z[k];
             float x1 = cx + p->x[j], z1 = cz + p->z[j];
-            const uint8_t *c = (fabsf(x1 - x0) > fabsf(z1 - z0)) ? side_z : side_x;
-            map_push(x0, ytop, z0, c); map_push(x1, ytop, z1, c); map_push(x1, ybot, z1, c);
-            map_push(x0, ytop, z0, c); map_push(x1, ybot, z1, c); map_push(x0, ybot, z0, c);
+            /* Outward normal of a counter-clockwise footprint edge. */
+            float nx = z1 - z0, nz = -(x1 - x0);
+            int slot = (nx == 0.0f) ? (nz > 0 ? SLOT_POS_Z : SLOT_NEG_Z)
+                     : (nz == 0.0f) ? (nx > 0 ? SLOT_POS_X : SLOT_NEG_X) : SLOT_DIAG;
+            int layer = map_face_layer(idx, slot);
+            int along_x = fabsf(x1 - x0) > fabsf(z1 - z0);
+            const uint8_t *c = layer >= 0 ? (along_x ? lit_z : lit_x) : (along_x ? side_z : side_x);
+            float u0 = (along_x ? x0 : z0) / MAP_TEXEL, u1 = (along_x ? x1 : z1) / MAP_TEXEL;
+            float vt = ytop / MAP_TEXEL, vb = ybot / MAP_TEXEL;
+            map_push_tex(x0, ytop, z0, c, u0, vt, layer);
+            map_push_tex(x1, ytop, z1, c, u1, vt, layer);
+            map_push_tex(x1, ybot, z1, c, u1, vb, layer);
+            map_push_tex(x0, ytop, z0, c, u0, vt, layer);
+            map_push_tex(x1, ybot, z1, c, u1, vb, layer);
+            map_push_tex(x0, ybot, z0, c, u0, vb, layer);
         }
     }
 }
@@ -596,7 +646,7 @@ static void build_map_mesh(void) {
             /* Every element of the cell's stack, up to the one marked last. */
             for (; (int)idx < top_of_map_elements; idx++) {
                 const map_area_element_t *e = &map_elements[idx];
-                map_prism(cx, cz, e);
+                map_prism(cx, cz, idx, e);
                 map_element_roofs(row, col, idx, e);
                 if ((uint16_t)e->code_index_p1 & 0x8000) break;
             }

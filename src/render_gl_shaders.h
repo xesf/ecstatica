@@ -148,19 +148,37 @@ static const char *VS_MAP =
     "#version 330 core\n"
     "layout(location = 0) in vec3 a_pos;\n"
     "layout(location = 1) in vec3 a_rgb;\n"
+    "layout(location = 2) in vec2 a_uv;\n"
+    "layout(location = 3) in int  a_layer;\n"
     "uniform mat4 u_view;\n"
     "uniform mat4 u_proj;\n"
     "out vec3 v_rgb;\n"
+    "out vec2 v_uv;\n"
+    "flat out int v_layer;\n"
     "void main() {\n"
     "    v_rgb = a_rgb;\n"
+    "    v_uv = a_uv;\n"
+    "    v_layer = a_layer;\n"
     "    gl_Position = u_proj * (u_view * vec4(a_pos, 1.0));\n"
     "}\n";
 
+/* Textured faces sample E2's 128x128 palette textures, nearest, and scale
+ * the palette colour by the face shade. */
 static const char *FS_MAP =
     "#version 330 core\n"
     "in vec3 v_rgb;\n"
+    "in vec2 v_uv;\n"
+    "flat in int v_layer;\n"
     ECS_GLSL_DUAL_OUT
-    "void main() { o_col = vec4(v_rgb, 1.0); o_idx = 0u; }\n";
+    "uniform usampler2DArray u_textures;\n"
+    ECS_GLSL_PALETTE
+    "void main() {\n"
+    "    if (v_layer < 0) { o_col = vec4(v_rgb, 1.0); o_idx = 0u; return; }\n"
+    "    ivec2 t = ivec2(floor(v_uv)) & ivec2(127);\n"
+    "    uint idx = texelFetch(u_textures, ivec3(t, v_layer), 0).r;\n"
+    "    o_col = vec4(pal_rgb(idx) * v_rgb, 1.0);\n"
+    "    o_idx = idx;\n"
+    "}\n";
 
 /* ── Ellipsoids ────────────────────────────────────────────────
  * A screen-aligned quad per instance; the fragment shader intersects the view

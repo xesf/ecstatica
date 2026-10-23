@@ -44,12 +44,14 @@ typedef struct {
     int16_t layer;
 } render_vertex_t;
 
-/* Debug map vertex. RGB, not a palette index, so the colour coding stays
- * readable under any view palette. */
+/* 3D map vertex. Untextured faces carry an RGB colour; textured ones (layer
+ * >= 0, E2's face textures) a grey shade the palette colour is scaled by. */
 typedef struct {
     float   pos[3];
+    float   uv[2];           /* texel units, wrapped at 128 */
     uint8_t rgb[3];
     uint8_t pad;
+    int32_t layer;
 } render_map_vertex_t;
 
 typedef struct {

@@ -32,6 +32,12 @@ extern map_area_element_t map_elements[60000];
  * keeps the original 12-byte layout. Only the background builder reads it:
  * these are the original DrawRoof scripts. */
 extern int16_t map_element_code2[60000];
+#ifdef ECS_ENABLE_GL
+/* E2's seven texture slots per element (texture name index, -1 = none):
+ * 0 -Z side, 1 +Z side, 2 -X side, 3 +X side, 4 top, 5 bottom, 6 diagonal
+ * side (Ecstatica II.exe, sub_140146430). Only the 3D map draws them. */
+extern int16_t map_element_tex[60000][7];
+#endif
 extern int32_t top_of_map_elements;
 /* supress_events_469BF0 — set while an act is wound forward by complete_act */
 extern int16_t suppress_events;
