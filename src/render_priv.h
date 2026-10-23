@@ -54,6 +54,15 @@ typedef struct {
     int32_t layer;
 } render_map_vertex_t;
 
+/* 3D map ellipsoid (plants, grass) in world space: p = centre + [ax ay az] u,
+ * the axis vectors already scaled by the semi-axes. */
+typedef struct {
+    float   centre[3];
+    float   ax[3], ay[3], az[3];
+    uint8_t rgb[3];
+    uint8_t pad;
+} render_map_ellipsoid_t;
+
 typedef struct {
     float view[16];
     float proj[16];
@@ -69,6 +78,9 @@ typedef struct {
 
     const render_map_vertex_t *map_verts;
     int                        map_count;
+    const render_map_ellipsoid_t *map_ells;
+    int                           map_ell_count;
+    unsigned                      map_gen;     /* bumped when the map lists change */
 } render_frame_t;
 
 extern render_frame_t render_frame;

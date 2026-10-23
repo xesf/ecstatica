@@ -378,6 +378,31 @@ static void map_push_tex(float x, float y, float z, const uint8_t rgb[3],
     v->layer = layer;
 }
 
+static render_map_ellipsoid_t *s_map_ells;
+static int  s_map_ell_count;
+static int  s_map_ell_cap;
+static unsigned s_map_gen;
+
+/* An ellipsoid of the 3D map: centre and its three scaled axis vectors. */
+static void map_push_ellipsoid(const float c[3], const float ax[3], const float ay[3],
+                               const float az[3], const uint8_t rgb[3]) {
+    if (s_map_ell_count >= s_map_ell_cap) {
+        int cap = s_map_ell_cap ? s_map_ell_cap * 2 : 65536;
+        render_map_ellipsoid_t *g = (render_map_ellipsoid_t *)realloc(s_map_ells,
+                                        (size_t)cap * sizeof(*g));
+        if (!g) return;
+        s_map_ells = g;
+        s_map_ell_cap = cap;
+    }
+    render_map_ellipsoid_t *e = &s_map_ells[s_map_ell_count++];
+    memcpy(e->centre, c, sizeof(e->centre));
+    memcpy(e->ax, ax, sizeof(e->ax));
+    memcpy(e->ay, ay, sizeof(e->ay));
+    memcpy(e->az, az, sizeof(e->az));
+    e->rgb[0] = rgb[0]; e->rgb[1] = rgb[1]; e->rgb[2] = rgb[2];
+    e->pad = 0;
+}
+
 static void map_push(float x, float y, float z, const uint8_t rgb[3]) {
     map_push_tex(x, y, z, rgb, 0.0f, 0.0f, -1);
 }
@@ -567,30 +592,32 @@ static uint32_t grass_rand(uint32_t *s) {
  * further out. */
 #define GRASS_RADIUS 9
 
+static void blade_colour(uint32_t *seed, uint8_t out[3]) {
+    float shade = 0.8f + (float)(grass_rand(seed) % 40) / 100.0f;
+    float mix = (float)(grass_rand(seed) % 100) / 100.0f;
+    for (int k = 0; k < 3; k++) {
+        float v = (grass_root_rgb[k] + (grass_tip_rgb[k] - grass_root_rgb[k]) * mix) * shade;
+        out[k] = (uint8_t)(v > 255 ? 255 : v);
+    }
+}
+
 static void map_grass_tuft(float x, float y, float z, const uint8_t base[3], uint32_t *seed) {
+    (void)base;
     float yaw0 = (float)(grass_rand(seed) & 0xFFFF) * (6.2831853f / 65536.0f);
     for (int b = 0; b < 8; b++) {
         float yaw = yaw0 + (float)b * (6.2831853f * 0x5000 / 0x10000);
         float tilt = (float)b * (6.2831853f * 0x180 / 0x4000);
-        /* 80..175 is the ellipsoid's half length. */
-        float len = 2.0f * (80.0f + (float)(grass_rand(seed) % 96));
+        float len = 80.0f + (float)(grass_rand(seed) % 96);
         float dx = cosf(yaw), dz = sinf(yaw);
-        /* Up is -Y in the engine. */
-        float tipx = x + dx * sinf(tilt) * len;
-        float tipy = y - cosf(tilt) * len;
-        float tipz = z + dz * sinf(tilt) * len;
-        float wx = -dz * 8.0f, wz = dx * 8.0f;
-        uint8_t root[3], tip[3];
-        float shade = 0.8f + (float)(grass_rand(seed) % 40) / 100.0f;
-        for (int k = 0; k < 3; k++) {
-            float r = grass_root_rgb[k] * shade, t = grass_tip_rgb[k] * shade;
-            root[k] = (uint8_t)(r > 255 ? 255 : r);
-            tip[k] = (uint8_t)(t > 255 ? 255 : t);
-        }
-        (void)base;
-        map_push(x - wx, y, z - wz, root);
-        map_push(x + wx, y, z + wz, root);
-        map_push(tipx, tipy, tipz, tip);
+        /* Up is -Y in the engine; the blade grows from (x, y, z). */
+        float az[3] = { dx * sinf(tilt), -cosf(tilt), dz * sinf(tilt) };
+        float ax[3] = { -dz * 8.0f, 0.0f, dx * 8.0f };
+        float ay[3] = { az[1] * dx * 8.0f, (az[2] * -dz - az[0] * dx) * 8.0f, az[1] * dz * 8.0f };
+        float c[3] = { x + az[0] * len, y + az[1] * len, z + az[2] * len };
+        for (int k = 0; k < 3; k++) az[k] *= len;
+        uint8_t rgb[3];
+        blade_colour(seed, rgb);
+        map_push_ellipsoid(c, ax, ay, az, rgb);
     }
 }
 
@@ -648,19 +675,19 @@ static void map_grass(float cx, float cz, int idx, const map_area_element_t *e,
  * previous one's centre; every fifth segment splits off three branches 120
  * degrees apart, tilted 67.5 degrees; twigs under 0xB0 carry three needles.
  * Sizes 0x600+ are trees, under 0x500 bushes that split at the root. Here an
- * ellipsoid is a six-triangle diamond and a needle one triangle. */
+ * ellipsoid is a GPU impostor, like the actors'. */
 typedef struct { float m[3][3]; float p[3]; } plant_frame_t;
 
 #define ANGLE_RAD(a) ((float)((a) & 0xFFFF) * (6.2831853f / 65536.0f))
 
 /* A big tree is tens of thousands of ellipsoids; plants are built nearest
- * first until the vertex budget runs out. */
+ * first until the budget runs out. */
 #define PLANT_RADIUS 12
-#define PLANT_VERT_BUDGET (3 * 1024 * 1024)
+#define PLANT_ELL_BUDGET (1024 * 1024)
 
 static const uint8_t plant_stem_rgb[3] = { 60, 48, 22 };
 
-static int plant_vert_end;
+static int plant_ell_end;
 /* The original's level of detail, 64 = full: out of 64 segments this many
  * are drawn (the rest lengthen the next one), and needles grow with it. */
 static int plant_lod;
@@ -683,52 +710,26 @@ static void plant_point(const plant_frame_t *f, float lx, float ly, float lz, fl
 }
 
 static int plant_full(void) {
-    return s_map_count >= plant_vert_end;
+    return s_map_ell_count >= plant_ell_end;
 }
 
-/* An ellipsoid as a diamond: tips along local Z, a three-point waist. */
 static void plant_ellipsoid(const plant_frame_t *f, float off, float rxy, float rz,
                             const uint8_t rgb[3]) {
     if (rxy <= 0.0f || plant_full()) return;
-    float top[3], bot[3], ring[3][3];
-    plant_point(f, 0, 0, off - rz, top);
-    plant_point(f, 0, 0, off + rz, bot);
-    plant_point(f, rxy, 0, off, ring[0]);
-    plant_point(f, -0.5f * rxy,  0.866f * rxy, off, ring[1]);
-    plant_point(f, -0.5f * rxy, -0.866f * rxy, off, ring[2]);
-    uint8_t shade[3][3];
-    for (int k = 0; k < 3; k++) {
-        shade[0][k] = rgb[k];
-        shade[1][k] = (uint8_t)(rgb[k] * 0.75f);
-        shade[2][k] = (uint8_t)(rgb[k] * 0.5f);
+    float c[3], ax[3], ay[3], az[3];
+    plant_point(f, 0, 0, off, c);
+    for (int r = 0; r < 3; r++) {
+        ax[r] = f->m[r][0] * rxy;
+        ay[r] = f->m[r][1] * rxy;
+        az[r] = f->m[r][2] * rz;
     }
-    for (int i = 0; i < 3; i++) {
-        const float *a = ring[i], *b = ring[(i + 1) % 3];
-        map_push(top[0], top[1], top[2], shade[i]);
-        map_push(a[0], a[1], a[2], shade[i]);
-        map_push(b[0], b[1], b[2], shade[i]);
-        map_push(bot[0], bot[1], bot[2], shade[2]);
-        map_push(b[0], b[1], b[2], shade[2]);
-        map_push(a[0], a[1], a[2], shade[2]);
-    }
+    map_push_ellipsoid(c, ax, ay, az, rgb);
 }
 
 static void plant_needle(const plant_frame_t *f, float w, float len, uint32_t *seed) {
-    if (plant_full()) return;
-    float a[3], b[3], tip[3];
-    plant_point(f, -w, 0, 0, a);
-    plant_point(f,  w, 0, 0, b);
-    plant_point(f, 0, 0, -2.0f * len, tip);
-    float shade = 0.8f + (float)(grass_rand(seed) % 40) / 100.0f;
-    uint8_t root[3], end[3];
-    for (int k = 0; k < 3; k++) {
-        float r = grass_root_rgb[k] * shade, t = grass_tip_rgb[k] * shade;
-        root[k] = (uint8_t)(r > 255 ? 255 : r);
-        end[k] = (uint8_t)(t > 255 ? 255 : t);
-    }
-    map_push(a[0], a[1], a[2], root);
-    map_push(b[0], b[1], b[2], root);
-    map_push(tip[0], tip[1], tip[2], end);
+    uint8_t rgb[3];
+    blade_colour(seed, rgb);
+    plant_ellipsoid(f, -len, w, len, rgb);
 }
 
 /* The child's frame: at the parent's ellipsoid centre, turned by the child's
@@ -887,7 +888,7 @@ static void map_plants(int row, int col, int idx, const map_area_element_t *e,
 
 /* Every plant cell within PLANT_RADIUS, ring by ring outwards. */
 static void map_all_plants(int crow, int ccol) {
-    plant_vert_end = s_map_count + PLANT_VERT_BUDGET;
+    plant_ell_end = s_map_ell_count + PLANT_ELL_BUDGET;
     for (int ring = 0; ring <= PLANT_RADIUS && !plant_full(); ring++) {
         plant_lod = ring <= 2 ? 64 : 128 / ring;
         for (int row = crow - ring; row <= crow + ring; row++) {
@@ -998,6 +999,8 @@ static void build_map_mesh(void) {
     s_map_centre_row = crow;
     s_map_centre_col = ccol;
     s_map_count = 0;
+    s_map_ell_count = 0;
+    s_map_gen++;
 
     int r0 = crow - MAP_VIEW_RADIUS, r1 = crow + MAP_VIEW_RADIUS;
     int c0 = ccol - MAP_VIEW_RADIUS, c1 = ccol + MAP_VIEW_RADIUS;
@@ -1025,7 +1028,7 @@ static void build_map_mesh(void) {
         }
     }
     map_all_plants(crow, ccol);
-    DBG_LOG(2, "[MAP3D] verts=%d\n", s_map_count);
+    DBG_LOG(2, "[MAP3D] verts=%d ellipsoids=%d\n", s_map_count, s_map_ell_count);
 }
 
 /* ── Frame ────────────────────────────────────────────────── */
@@ -1045,6 +1048,9 @@ void render_frame_begin(void) {
     if (render_map3d) build_map_mesh();
     render_frame.map_verts = render_map3d ? s_map_verts : NULL;
     render_frame.map_count = render_map3d ? s_map_count : 0;
+    render_frame.map_ells = render_map3d ? s_map_ells : NULL;
+    render_frame.map_ell_count = render_map3d ? s_map_ell_count : 0;
+    render_frame.map_gen = s_map_gen;
 
     render_gl_frame_begin();
 }

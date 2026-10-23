@@ -189,7 +189,7 @@ plants one per top-face triangle and `sub_1401457C0` grows it.
   up to 24 x 24 x 96.
 
 The GL 3D map (`map_all_plants` in `src/render.c`) grows the same plants
-from triangles: diamond ellipsoids, one triangle per needle.
+as real ellipsoids, ray-cast per pixel like the actors'.
 
 Grass (materials 5 and 13) is in the first switch. Each top-face triangle is
 filled on a 16-step grid in its own coordinates (i + j <= 15), every point

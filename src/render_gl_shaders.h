@@ -180,6 +180,76 @@ static const char *FS_MAP =
     "    o_idx = idx;\n"
     "}\n";
 
+/* Map ellipsoids: the same impostor as the actors' below, from world-space
+ * axis vectors, lit by a fixed light instead of the shade tables. */
+static const char *VS_MAP_ELL =
+    "#version 330 core\n"
+    "layout(location = 0) in vec3 a_centre;\n"
+    "layout(location = 1) in vec3 a_ax;\n"
+    "layout(location = 2) in vec3 a_ay;\n"
+    "layout(location = 3) in vec3 a_az;\n"
+    "layout(location = 4) in vec3 a_rgb;\n"
+    "uniform mat4 u_view;\n"
+    "uniform mat4 u_proj;\n"
+    "uniform float u_near;\n"
+    "flat out vec3 v_centre;\n"
+    "flat out mat3 v_inv;\n"
+    "flat out vec3 v_rgb;\n"
+    "out vec3 v_ray;\n"
+    "void main() {\n"
+    "    mat3 V = mat3(u_view);\n"
+    "    mat3 A = mat3(V * a_ax, V * a_ay, V * a_az);\n"
+    "    vec3 c = (u_view * vec4(a_centre, 1.0)).xyz;\n"
+    "    float r = max(length(a_ax), max(length(a_ay), length(a_az)));\n"
+    "    v_centre = c;\n"
+    "    v_inv = inverse(A);\n"
+    "    v_rgb = a_rgb;\n"
+    "    if (c.z + r < u_near) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); v_ray = vec3(0.0); return; }\n"
+    "    vec2 corner = vec2((gl_VertexID & 1) == 0 ? -1.0 : 1.0,\n"
+    "                       (gl_VertexID & 2) == 0 ? -1.0 : 1.0);\n"
+    "    float denom = max(c.z - r, u_near);\n"
+    "    float ext = r * (c.z + length(c.xy)) / denom;\n"
+    "    ext = clamp(ext * 1.05, r, 32767.0);\n"
+    "    vec3 vp = vec3(c.xy + corner * ext, max(c.z, u_near));\n"
+    "    v_ray = vp;\n"
+    "    gl_Position = u_proj * vec4(vp, 1.0);\n"
+    "}\n";
+
+static const char *FS_MAP_ELL =
+    "#version 330 core\n"
+    "flat in vec3 v_centre;\n"
+    "flat in mat3 v_inv;\n"
+    "flat in vec3 v_rgb;\n"
+    "in vec3 v_ray;\n"
+    ECS_GLSL_DUAL_OUT
+    "uniform float u_near;\n"
+    "uniform float u_far;\n"
+    "uniform vec3 u_light;\n"
+    "void main() {\n"
+    "    vec3 d = normalize(v_ray);\n"
+    "    vec3 o2 = -(v_inv * v_centre);\n"
+    "    vec3 d2 = v_inv * d;\n"
+    "    float a = dot(d2, d2);\n"
+    "    float b = 2.0 * dot(o2, d2);\n"
+    "    float c = dot(o2, o2) - 1.0;\n"
+    "    float disc = b * b - 4.0 * a * c;\n"
+    "    if (disc < 0.0) discard;\n"
+    "    float sq = sqrt(disc);\n"
+    "    float t = (-b - sq) / (2.0 * a);\n"
+    "    if (t <= 0.0) t = (-b + sq) / (2.0 * a);\n"
+    "    if (t <= 0.0) discard;\n"
+    "    vec3 u = o2 + t * d2;\n"
+    "    vec3 p = t * d;\n"
+    "    if (p.z < u_near) discard;\n"
+    "    float ndc = (u_far + u_near) / (u_far - u_near)\n"
+    "              - 2.0 * u_far * u_near / ((u_far - u_near) * p.z);\n"
+    "    gl_FragDepth = clamp(ndc * 0.5 + 0.5, 0.0, 1.0);\n"
+    "    vec3 n = normalize(transpose(v_inv) * u);\n"
+    "    float l = 0.35 + 0.75 * max(dot(n, u_light), 0.0);\n"
+    "    o_col = vec4(min(v_rgb * l, vec3(1.0)), 1.0);\n"
+    "    o_idx = 0u;\n"
+    "}\n";
+
 /* ── Ellipsoids ────────────────────────────────────────────────
  * A screen-aligned quad per instance; the fragment shader intersects the view
  * ray with the quadric for an exact silhouette and per-pixel depth. The quad

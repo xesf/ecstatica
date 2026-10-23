@@ -47,7 +47,7 @@ static struct {
     int ss;                /* supersample factor actually in use */
 
     GLuint prog_bg, prog_composite, prog_flat, prog_tex, prog_ell, prog_ell_mod;
-    GLuint prog_map;
+    GLuint prog_map, prog_map_ell;
 
     /* RGB to look at, plus each pixel's palette index for the shadow/smoke/beam
      * passes to remap. */
@@ -70,6 +70,8 @@ static struct {
     GLuint vao_tri, vbo_tri;
     GLuint vao_ell, vbo_ell;
     GLuint vao_map, vbo_map;
+    GLuint vao_map_ell, vbo_map_ell;
+    unsigned map_gen_uploaded;
 
     int16_t tex_layer[TEXTURE_TAB_SIZE];
     int     tex_layer_next;
@@ -458,12 +460,33 @@ static void draw_map3d(void) {
     glDepthFunc(GL_LEQUAL);
     glDepthMask(GL_TRUE);
 
+    /* The lists only change when the hero crosses a cell. */
+    int upload = G.map_gen_uploaded != render_frame.map_gen;
+    G.map_gen_uploaded = render_frame.map_gen;
+
     glBindVertexArray(G.vao_map);
     glBindBuffer(GL_ARRAY_BUFFER, G.vbo_map);
-    glBufferData(GL_ARRAY_BUFFER,
-                 (GLsizeiptr)((size_t)render_frame.map_count * sizeof(render_map_vertex_t)),
-                 render_frame.map_verts, GL_STREAM_DRAW);
+    if (upload)
+        glBufferData(GL_ARRAY_BUFFER,
+                     (GLsizeiptr)((size_t)render_frame.map_count * sizeof(render_map_vertex_t)),
+                     render_frame.map_verts, GL_STATIC_DRAW);
     glDrawArrays(GL_TRIANGLES, 0, render_frame.map_count);
+
+    if (render_frame.map_ell_count <= 0) return;
+    glUseProgram(G.prog_map_ell);
+    set_uniform_m4(G.prog_map_ell, "u_view", render_frame.view);
+    set_uniform_m4(G.prog_map_ell, "u_proj", render_frame.proj);
+    set_uniform_f(G.prog_map_ell, "u_near", (float)RENDER_NEAR_Z);
+    set_uniform_f(G.prog_map_ell, "u_far",  (float)RENDER_FAR_Z);
+    /* From above and behind the camera, in view space. */
+    glUniform3f(glGetUniformLocation(G.prog_map_ell, "u_light"), 0.30f, -0.75f, -0.59f);
+    glBindVertexArray(G.vao_map_ell);
+    glBindBuffer(GL_ARRAY_BUFFER, G.vbo_map_ell);
+    if (upload)
+        glBufferData(GL_ARRAY_BUFFER,
+                     (GLsizeiptr)((size_t)render_frame.map_ell_count * sizeof(render_map_ellipsoid_t)),
+                     render_frame.map_ells, GL_STATIC_DRAW);
+    glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, render_frame.map_ell_count);
 }
 
 static void draw_background(void) {
@@ -822,9 +845,10 @@ static bool build_programs(void) {
     G.prog_ell       = link_program(VS_ELLIPSOID,  FS_ELLIPSOID,  "ellipsoid");
     G.prog_ell_mod   = link_program(VS_ELLIPSOID,  FS_ELL_MODULATE, "ellipsoid modulate");
     G.prog_map       = link_program(VS_MAP,        FS_MAP,        "debug map");
+    G.prog_map_ell   = link_program(VS_MAP_ELL,    FS_MAP_ELL,    "map ellipsoid");
 
     return G.prog_bg && G.prog_composite && G.prog_flat && G.prog_tex &&
-           G.prog_ell && G.prog_ell_mod && G.prog_map;
+           G.prog_ell && G.prog_ell_mod && G.prog_map && G.prog_map_ell;
 }
 
 static void build_geometry(void) {
@@ -877,6 +901,27 @@ static void build_geometry(void) {
         glVertexAttribIPointer(6, 2, GL_INT, stride,
                                (void *)(size_t)offsetof(gl_instance_t, style));
         glVertexAttribDivisor(6, 1);
+    }
+
+    glGenVertexArrays(1, &G.vao_map_ell);
+    glGenBuffers(1, &G.vbo_map_ell);
+    glBindVertexArray(G.vao_map_ell);
+    glBindBuffer(GL_ARRAY_BUFFER, G.vbo_map_ell);
+    {
+        GLsizei stride = (GLsizei)sizeof(render_map_ellipsoid_t);
+        size_t off[4] = { offsetof(render_map_ellipsoid_t, centre),
+                          offsetof(render_map_ellipsoid_t, ax),
+                          offsetof(render_map_ellipsoid_t, ay),
+                          offsetof(render_map_ellipsoid_t, az) };
+        for (int i = 0; i < 4; i++) {
+            glEnableVertexAttribArray((GLuint)i);
+            glVertexAttribPointer((GLuint)i, 3, GL_FLOAT, GL_FALSE, stride, (void *)off[i]);
+            glVertexAttribDivisor((GLuint)i, 1);
+        }
+        glEnableVertexAttribArray(4);
+        glVertexAttribPointer(4, 3, GL_UNSIGNED_BYTE, GL_TRUE, stride,
+                              (void *)(size_t)offsetof(render_map_ellipsoid_t, rgb));
+        glVertexAttribDivisor(4, 1);
     }
 
     /* Debug map: position plus a straight RGB colour. */
