@@ -116,6 +116,13 @@ carry. What is established so far, from `Ecstatica II.exe`:
 - **E2 faces.** The seven words per E2 element are texture slots into the
   database's texture names (`FLOOR`, `WALLS`, `CARPET`, `WOOD1`-`3`,
   `BRICK1`, `FLAG1`-`6`, `STONE1`...), whose images are `Code/Textures`.
+- **Graphics.** New `.raw` images in the "mhwanh" format: a 32-byte header
+  (`mhwanh`, then big-endian width and height at offset 8), a 768-byte 8-bit
+  RGB palette, then the pixels. E1 adds `hiressky.raw` (640x480, the blue sky
+  gradient behind the Software views) and `bumpmap.raw` (128x128, white
+  mortar lines between stone blocks); E2 has `bumpmap.raw` to
+  `bumpmap4.raw`. The GL 3D map draws the sky behind the world and uses
+  `bumpmap.raw` on the sides of E1's terraces (3) and rock (4).
 - **Surfaces.** `Graphics/bumpmap*.raw` (128x128) texture the materials;
   `antialia.dat` and the `ErPalLut` LUTs blend in palette space.
 

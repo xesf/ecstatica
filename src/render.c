@@ -513,6 +513,9 @@ static int map_face_layer(int idx, int slot) {
 /* One map element as a solid prism: its footprint from height2 up to
  * def_height. Ground blocks (height2 0) only get a short skirt; the rest of
  * their column is never seen. */
+/* Vertex layer for an untextured face patterned with bumpmap.raw. */
+#define MAP_LAYER_STONE (-2)
+
 static void map_prism(float cx, float cz, int idx, const map_area_element_t *e) {
     map_poly_t polys[4];
     int np = map_footprint(e->block_config, polys);
@@ -529,6 +532,11 @@ static void map_prism(float cx, float cz, int idx, const map_area_element_t *e) 
     material_colour(e->material, 0.4f, under);
     static const uint8_t lit[3] = { 255, 255, 255 }, lit_x[3] = { 200, 200, 200 },
                          lit_z[3] = { 165, 165, 165 }, lit_under[3] = { 110, 110, 110 };
+
+    /* E1's terraces (3) and rock (4) show dry-stone walls on their sides in
+     * the re-release's renders. */
+    int stone = game_version == GAME_VERSION_E1 && (e->material == 3 || e->material == 4);
+    static const uint8_t stone_x[3] = { 100, 100, 104 }, stone_z[3] = { 78, 78, 84 };
 
     int top_layer = map_face_layer(idx, SLOT_TOP);
     int bot_layer = e->height2 ? map_face_layer(idx, SLOT_BOTTOM) : -1;
@@ -562,6 +570,10 @@ static void map_prism(float cx, float cz, int idx, const map_area_element_t *e) 
             int layer = map_face_layer(idx, slot);
             int along_x = fabsf(x1 - x0) > fabsf(z1 - z0);
             const uint8_t *c = layer >= 0 ? (along_x ? lit_z : lit_x) : (along_x ? side_z : side_x);
+            if (layer < 0 && stone) {
+                layer = MAP_LAYER_STONE;
+                c = along_x ? stone_z : stone_x;
+            }
             float u0 = (along_x ? x0 : z0) / MAP_TEXEL, u1 = (along_x ? x1 : z1) / MAP_TEXEL;
             float vt = ytop / MAP_TEXEL, vb = ybot / MAP_TEXEL;
             map_push_tex(x0, ytop, z0, c, u0, vt, layer);

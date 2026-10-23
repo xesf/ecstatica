@@ -23,6 +23,8 @@
 #include "init.h"
 #include "topo.h"
 #include "win.h"
+#include "asm_f.h"
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -47,7 +49,7 @@ static struct {
     int ss;                /* supersample factor actually in use */
 
     GLuint prog_bg, prog_composite, prog_flat, prog_tex, prog_ell, prog_ell_mod;
-    GLuint prog_map, prog_map_ell;
+    GLuint prog_map, prog_map_ell, prog_sky;
 
     /* RGB to look at, plus each pixel's palette index for the shadow/smoke/beam
      * passes to remap. */
@@ -65,6 +67,9 @@ static struct {
     GLuint tex_shade_tab;   /* 128x128x17 R8UI */
     GLuint tex_shadow_tab;  /* 256x16x3  R8UI — SHADOW.DAT */
     GLuint tex_array;       /* part textures */
+    GLuint tex_sky;         /* RGB8 re-release hiressky.raw, or 0 */
+    GLuint tex_bump;        /* 128x128 R8UI bumpmap.raw brightness */
+    bool   map_art_loaded;
 
     GLuint vao_empty;
     GLuint vao_tri, vbo_tri;
@@ -427,6 +432,54 @@ int render_gl_texture_layer(int16_t texture_name_index) {
     return slot;
 }
 
+/* A re-release Graphics .raw image: "mhwanh" header (big-endian width and
+ * height at 8), a 256-colour 8-bit palette at 32, then the pixels. Returns
+ * RGB, or NULL. */
+static uint8_t *load_raw_rgb(const char *name, int *w, int *h) {
+    FILE *f = fopen_ci(name, "rb");
+    if (!f) return NULL;
+    uint8_t hdr[32 + 768];
+    uint8_t *rgb = NULL;
+    if (fread(hdr, 1, sizeof(hdr), f) == sizeof(hdr) && memcmp(hdr, "mhwanh", 6) == 0) {
+        *w = hdr[8] << 8 | hdr[9];
+        *h = hdr[10] << 8 | hdr[11];
+        size_t n = (size_t)*w * (size_t)*h;
+        uint8_t *px = (uint8_t *)malloc(n);
+        rgb = (uint8_t *)malloc(n * 3);
+        if (px && rgb && n && fread(px, 1, n, f) == n) {
+            for (size_t i = 0; i < n; i++)
+                memcpy(&rgb[i * 3], &hdr[32 + px[i] * 3], 3);
+        } else {
+            free(rgb);
+            rgb = NULL;
+        }
+        free(px);
+    }
+    fclose(f);
+    return rgb;
+}
+
+static void load_map_art(void) {
+    if (G.map_art_loaded) return;
+    G.map_art_loaded = true;
+    int w = 0, h = 0;
+    uint8_t *sky = load_raw_rgb("HIRESSKY.RAW", &w, &h);
+    if (sky) {
+        G.tex_sky = make_tex_2d(GL_RGB8, w, h, GL_RGB, GL_UNSIGNED_BYTE, sky);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        free(sky);
+    }
+    uint8_t lum[128 * 128] = { 0 };
+    uint8_t *bump = load_raw_rgb("BUMPMAP.RAW", &w, &h);
+    if (bump && w == 128 && h == 128)
+        for (int i = 0; i < 128 * 128; i++)
+            lum[i] = (uint8_t)((bump[i * 3] + bump[i * 3 + 1] + bump[i * 3 + 2]) / 3);
+    free(bump);
+    G.tex_bump = make_tex_2d(GL_R8UI, 128, 128, GL_RED_INTEGER, GL_UNSIGNED_BYTE, lum);
+    DBG_LOG(1, "[GL] 3D map art: sky %s\n", G.tex_sky ? "hiressky.raw" : "none");
+}
+
 /* ── Draw ─────────────────────────────────────────────────── */
 
 static void bind_tex(int unit, GLenum target, GLuint tex) {
@@ -446,6 +499,17 @@ static void draw_map3d(void) {
     glClearDepth(1.0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+    load_map_art();
+    if (G.tex_sky) {
+        glUseProgram(G.prog_sky);
+        bind_tex(0, GL_TEXTURE_2D, G.tex_sky);
+        set_uniform_i(G.prog_sky, "u_sky", 0);
+        glDisable(GL_DEPTH_TEST);
+        glDepthMask(GL_FALSE);
+        draw_fullscreen();
+        glDepthMask(GL_TRUE);
+    }
+
     if (render_frame.map_count <= 0) return;
 
     glUseProgram(G.prog_map);
@@ -455,6 +519,8 @@ static void draw_map3d(void) {
     set_uniform_i(G.prog_map, "u_palette", 0);
     bind_tex(1, GL_TEXTURE_2D_ARRAY, G.tex_array);
     set_uniform_i(G.prog_map, "u_textures", 1);
+    bind_tex(2, GL_TEXTURE_2D, G.tex_bump);
+    set_uniform_i(G.prog_map, "u_bump", 2);
 
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
@@ -846,9 +912,10 @@ static bool build_programs(void) {
     G.prog_ell_mod   = link_program(VS_ELLIPSOID,  FS_ELL_MODULATE, "ellipsoid modulate");
     G.prog_map       = link_program(VS_MAP,        FS_MAP,        "debug map");
     G.prog_map_ell   = link_program(VS_MAP_ELL,    FS_MAP_ELL,    "map ellipsoid");
+    G.prog_sky       = link_program(VS_FULLSCREEN, FS_SKY,        "sky");
 
     return G.prog_bg && G.prog_composite && G.prog_flat && G.prog_tex &&
-           G.prog_ell && G.prog_ell_mod && G.prog_map && G.prog_map_ell;
+           G.prog_ell && G.prog_ell_mod && G.prog_map && G.prog_map_ell && G.prog_sky;
 }
 
 static void build_geometry(void) {

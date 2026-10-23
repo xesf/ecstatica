@@ -171,13 +171,31 @@ static const char *FS_MAP =
     "flat in int v_layer;\n"
     ECS_GLSL_DUAL_OUT
     "uniform usampler2DArray u_textures;\n"
+    "uniform usampler2D u_bump;\n"
     ECS_GLSL_PALETTE
     "void main() {\n"
+    /* -2: stone, the re-release's bumpmap.raw as mortar between blocks. */
+    "    if (v_layer == -2) {\n"
+    "        ivec2 b = ivec2(floor(v_uv)) & ivec2(127);\n"
+    "        float m = float(texelFetch(u_bump, b, 0).r) / 255.0;\n"
+    "        o_col = vec4(v_rgb * (1.0 - 0.55 * m), 1.0); o_idx = 0u; return;\n"
+    "    }\n"
     "    if (v_layer < 0) { o_col = vec4(v_rgb, 1.0); o_idx = 0u; return; }\n"
     "    ivec2 t = ivec2(floor(v_uv)) & ivec2(127);\n"
     "    uint idx = texelFetch(u_textures, ivec3(t, v_layer), 0).r;\n"
     "    o_col = vec4(pal_rgb(idx) * v_rgb, 1.0);\n"
     "    o_idx = idx;\n"
+    "}\n";
+
+/* The 3D map's sky: the re-release's hiressky.raw stretched over the screen. */
+static const char *FS_SKY =
+    "#version 330 core\n"
+    "in vec2 v_uv;\n"
+    ECS_GLSL_DUAL_OUT
+    "uniform sampler2D u_sky;\n"
+    "void main() {\n"
+    "    o_col = vec4(texture(u_sky, v_uv).rgb, 1.0);\n"
+    "    o_idx = 0u;\n"
     "}\n";
 
 /* Map ellipsoids: the same impostor as the actors' below, from world-space
