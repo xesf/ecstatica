@@ -151,4 +151,21 @@ material (E2's executable):
 | 6, 7, 16 | Own paths, not identified yet |
 | 8 | Nothing drawn |
 
-Not yet traced: what each path draws. E1's executable has its own table.
+After a face, a second switch on material (`jpt_140147FAA`) adds generated
+decoration, every random value from the generator's LCG (`state * 0x41C64E6D
++ 0x3039`, kept per task at `+0x5C`):
+
+| Material | Decoration |
+|---|---|
+| 1, 22 | Own paths, not identified yet |
+| 2 | Pieces of size 0x600-0x9FF |
+| 9, 10 | Depends on the neighbouring materials (bit set `0x3FAF29F9`) |
+| 12 | A radial fan of ellipsoids: random size 0x200-0x5FF and start angle, each next leaf turned 0x5000 and 0x80 smaller, down to 0x88 - a plant |
+| 14, 15 | `sub_14014F8D0`, variant 1 / 2 |
+| 20 | Pieces of size 0x400-0x5FF |
+
+Grass (materials 5 and 13) is in the first switch: `sub_140173C50` prepares
+the face and a placement loop fills it.
+
+Not yet traced: the sizes and shapes each generator emits in full. E1's
+executable has its own tables.
