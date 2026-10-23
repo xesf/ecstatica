@@ -33,6 +33,7 @@ int16_t render_map3d          = 0;   /* 0 = pre-rendered, 1 = 3D map */
 #include "platform.h"
 #include "file.h"
 #include <string.h>
+#include <time.h>
 #include <stdlib.h>
 #include <math.h>
 
@@ -683,7 +684,7 @@ typedef struct { float m[3][3]; float p[3]; } plant_frame_t;
 /* A big tree is tens of thousands of ellipsoids; plants are built nearest
  * first until the budget runs out. */
 #define PLANT_RADIUS 12
-#define PLANT_ELL_BUDGET (1024 * 1024)
+#define PLANT_ELL_BUDGET (256 * 1024)
 
 static const uint8_t plant_stem_rgb[3] = { 60, 48, 22 };
 
@@ -890,7 +891,7 @@ static void map_plants(int row, int col, int idx, const map_area_element_t *e,
 static void map_all_plants(int crow, int ccol) {
     plant_ell_end = s_map_ell_count + PLANT_ELL_BUDGET;
     for (int ring = 0; ring <= PLANT_RADIUS && !plant_full(); ring++) {
-        plant_lod = ring <= 2 ? 64 : 128 / ring;
+        plant_lod = ring <= 1 ? 64 : 64 / ring;
         for (int row = crow - ring; row <= crow + ring; row++) {
             for (int col = ccol - ring; col <= ccol + ring; col++) {
                 if (abs(row - crow) != ring && abs(col - ccol) != ring) continue;
@@ -987,6 +988,7 @@ static void map_element_roofs(int row, int col, int idx, const map_area_element_
 }
 
 static void build_map_mesh(void) {
+    clock_t t0 = clock();
     int ccol = (view_pos.X >> 9) + 64;
     int crow = (view_pos.Z >> 9) + 64;
 
@@ -1028,7 +1030,7 @@ static void build_map_mesh(void) {
         }
     }
     map_all_plants(crow, ccol);
-    DBG_LOG(2, "[MAP3D] verts=%d ellipsoids=%d\n", s_map_count, s_map_ell_count);
+    DBG_LOG(2, "[MAP3D] verts=%d ellipsoids=%d ms=%ld\n", s_map_count, s_map_ell_count, (long)((clock() - t0) * 1000 / CLOCKS_PER_SEC));
 }
 
 /* ── Frame ────────────────────────────────────────────────── */

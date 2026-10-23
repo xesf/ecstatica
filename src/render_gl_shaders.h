@@ -205,12 +205,21 @@ static const char *VS_MAP_ELL =
     "    v_inv = inverse(A);\n"
     "    v_rgb = a_rgb;\n"
     "    if (c.z + r < u_near) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); v_ray = vec3(0.0); return; }\n"
+    /* A quad facing the eye, as wide as the ellipsoid's extent along each of
+     * its edges (sqrt of the summed squared axis projections), so thin
+     * needles do not pay for a square; grown by the perspective of its
+     * nearest point. */
+    "    vec3 dir = normalize(c);\n"
+    "    vec3 lng = A[2] - dir * dot(A[2], dir);\n"
+    "    vec3 s = length(lng) > 1e-3 * r ? normalize(lng) : normalize(cross(dir, vec3(1.0, 0.0, 0.0)));\n"
+    "    vec3 t = cross(dir, s);\n"
+    "    vec3 ps = s * A, pt = t * A;\n"
+    "    float k = c.z / max(c.z - r, u_near) * 1.05;\n"
+    "    float es = length(ps) * k, et = length(pt) * k;\n"
     "    vec2 corner = vec2((gl_VertexID & 1) == 0 ? -1.0 : 1.0,\n"
     "                       (gl_VertexID & 2) == 0 ? -1.0 : 1.0);\n"
-    "    float denom = max(c.z - r, u_near);\n"
-    "    float ext = r * (c.z + length(c.xy)) / denom;\n"
-    "    ext = clamp(ext * 1.05, r, 32767.0);\n"
-    "    vec3 vp = vec3(c.xy + corner * ext, max(c.z, u_near));\n"
+    "    vec3 vp = c + s * (corner.x * es) + t * (corner.y * et);\n"
+    "    vp.z = max(vp.z, u_near);\n"
     "    v_ray = vp;\n"
     "    gl_Position = u_proj * vec4(vp, 1.0);\n"
     "}\n";
