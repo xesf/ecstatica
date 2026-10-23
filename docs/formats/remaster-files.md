@@ -164,8 +164,16 @@ decoration, every random value from the generator's LCG (`state * 0x41C64E6D
 | 14, 15 | `sub_14014F8D0`, variant 1 / 2 |
 | 20 | Pieces of size 0x400-0x5FF |
 
-Grass (materials 5 and 13) is in the first switch: `sub_140173C50` prepares
-the face and a placement loop fills it.
+Grass (materials 5 and 13) is in the first switch. Each top-face triangle is
+filled on a 16-step grid in its own coordinates (i + j <= 15), every point
+jittered by -16..+15 units in X and Z; an 8x8 ordered-dither table at
+`0x1403390C0` thins the inside by screen density, the edges are always kept.
+`sub_14014E7A0` gives each point a shade and `sub_14014F070` emits the tuft:
+up to 8 ellipsoid blades, 8 x 8 x (80..175) units, each turned 0x5000
+(112.5 degrees) from the last and leaning 0x180 (8.4 degrees) further, from
+upright to about 59 degrees, thinned by the 8-entry table at `0x140339200`.
+Blade type is mostly 0x0A, sometimes 0x02; material 13 sets a second variant
+flag at random.
 
 Not yet traced: the sizes and shapes each generator emits in full. E1's
 executable has its own tables.

@@ -539,6 +539,89 @@ static void map_prism(float cx, float cz, int idx, const map_area_element_t *e) 
     }
 }
 
+/* ── Grass ──
+ * The re-release's grass (Ecstatica II.exe, case 5/13 of sub_140146430 and
+ * the tuft emitter sub_14014F070): each top face is filled on a 16-step grid
+ * in its own triangle coordinates, jittered +-16 units; every point carries a
+ * tuft of 8 thin ellipsoid blades (8 x 8 x 80..175), each turned 0x5000
+ * (112.5 degrees) from the last and leaning 8.4 degrees more, from upright to
+ * about 59 degrees. Here a blade is a thin triangle, and the grid thins out
+ * with distance from the camera. */
+static int is_grass_material(int material) {
+    if (game_version == GAME_VERSION_E1) return material == 3 || material == 10;
+    return material == 5 || material == 13;
+}
+
+/* Olive, from the grass in E1's pre-rendered views: dark at the root, lit at
+ * the tip. */
+static const uint8_t grass_root_rgb[3] = { 46, 50, 4 };
+static const uint8_t grass_tip_rgb[3]  = { 104, 108, 14 };
+
+static uint32_t grass_rand(uint32_t *s) {
+    *s = *s * 0x41C64E6Du + 0x3039u;
+    return *s >> 16;
+}
+
+/* Blades are expensive: only the cells near the camera get them, and fewer
+ * further out. */
+#define GRASS_RADIUS 9
+
+static void map_grass_tuft(float x, float y, float z, const uint8_t base[3], uint32_t *seed) {
+    float yaw0 = (float)(grass_rand(seed) & 0xFFFF) * (6.2831853f / 65536.0f);
+    for (int b = 0; b < 8; b++) {
+        float yaw = yaw0 + (float)b * (6.2831853f * 0x5000 / 0x10000);
+        float tilt = (float)b * (6.2831853f * 0x180 / 0x4000);
+        float len = 80.0f + (float)(grass_rand(seed) % 96);
+        float dx = cosf(yaw), dz = sinf(yaw);
+        /* Up is -Y in the engine. */
+        float tipx = x + dx * sinf(tilt) * len;
+        float tipy = y - cosf(tilt) * len;
+        float tipz = z + dz * sinf(tilt) * len;
+        float wx = -dz * 8.0f, wz = dx * 8.0f;
+        uint8_t root[3], tip[3];
+        float shade = 0.8f + (float)(grass_rand(seed) % 40) / 100.0f;
+        for (int k = 0; k < 3; k++) {
+            float r = grass_root_rgb[k] * shade, t = grass_tip_rgb[k] * shade;
+            root[k] = (uint8_t)(r > 255 ? 255 : r);
+            tip[k] = (uint8_t)(t > 255 ? 255 : t);
+        }
+        (void)base;
+        map_push(x - wx, y, z - wz, root);
+        map_push(x + wx, y, z + wz, root);
+        map_push(tipx, tipy, tipz, tip);
+    }
+}
+
+static void map_grass(float cx, float cz, int idx, const map_area_element_t *e,
+                      int ring) {
+    map_poly_t polys[4];
+    int np = map_footprint(e->block_config, polys);
+    float y = (float)((128 - (int)e->def_height) << height_shift);
+    /* The re-release's 16-step grid, halved per ring of distance. */
+    int steps = ring <= 2 ? 16 : ring <= 5 ? 8 : 4;
+    uint8_t base[3];
+    material_colour(e->material, 1.0f, base);
+    uint32_t seed = (uint32_t)idx * 2654435761u + 12345u;
+
+    for (int i = 0; i < np; i++) {
+        const map_poly_t *p = &polys[i];
+        for (int t = 1; t + 1 < p->n; t++) {
+            float ax = cx + p->x[0], az = cz + p->z[0];
+            float bx = cx + p->x[t] - ax, bz = cz + p->z[t] - az;
+            float qx = cx + p->x[t + 1] - ax, qz = cz + p->z[t + 1] - az;
+            for (int gi = 0; gi < steps; gi++) {
+                for (int gj = 0; gi + gj < steps; gj++) {
+                    float u = (float)gi / steps, v = (float)gj / steps;
+                    float jx = (float)((int)(grass_rand(&seed) & 31) - 16);
+                    float jz = (float)((int)(grass_rand(&seed) & 31) - 16);
+                    map_grass_tuft(ax + bx * u + qx * v + jx, y,
+                                   az + bz * u + qz * v + jz, base, &seed);
+                }
+            }
+        }
+    }
+}
+
 /* Thatch, measured from E1's roofs in the pre-rendered views. */
 static const uint8_t roof_rgb[3] = { 190, 120, 55 };
 
@@ -648,6 +731,9 @@ static void build_map_mesh(void) {
                 const map_area_element_t *e = &map_elements[idx];
                 map_prism(cx, cz, idx, e);
                 map_element_roofs(row, col, idx, e);
+                int ring = abs(row - crow) > abs(col - ccol) ? abs(row - crow) : abs(col - ccol);
+                if (ring <= GRASS_RADIUS && is_grass_material(e->material))
+                    map_grass(cx, cz, idx, e, ring);
                 if ((uint16_t)e->code_index_p1 & 0x8000) break;
             }
         }
