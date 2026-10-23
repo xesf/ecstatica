@@ -379,23 +379,32 @@ static void map_push_tex(float x, float y, float z, const uint8_t rgb[3],
     v->layer = layer;
 }
 
-static render_map_ellipsoid_t *s_map_ells;
-static int  s_map_ell_count;
-static int  s_map_ell_cap;
+/* Grass and plants are ellipsoid lists built on a background thread: `work`
+ * is the thread's, `ready` a finished list waiting for the next frame, and
+ * `front` the one drawn. They change hands under s_veg_lock. */
+typedef struct {
+    render_map_ellipsoid_t *v;
+    int n, cap;
+} ell_list_t;
+
+static ell_list_t s_veg[3];
+static ell_list_t *s_veg_front = &s_veg[0], *s_veg_ready = &s_veg[1], *s_veg_work = &s_veg[2];
+static ell_list_t *s_ell_target;
 static unsigned s_map_gen;
 
 /* An ellipsoid of the 3D map: centre and its three scaled axis vectors. */
 static void map_push_ellipsoid(const float c[3], const float ax[3], const float ay[3],
                                const float az[3], const uint8_t rgb[3]) {
-    if (s_map_ell_count >= s_map_ell_cap) {
-        int cap = s_map_ell_cap ? s_map_ell_cap * 2 : 65536;
-        render_map_ellipsoid_t *g = (render_map_ellipsoid_t *)realloc(s_map_ells,
+    ell_list_t *l = s_ell_target;
+    if (l->n >= l->cap) {
+        int cap = l->cap ? l->cap * 2 : 65536;
+        render_map_ellipsoid_t *g = (render_map_ellipsoid_t *)realloc(l->v,
                                         (size_t)cap * sizeof(*g));
         if (!g) return;
-        s_map_ells = g;
-        s_map_ell_cap = cap;
+        l->v = g;
+        l->cap = cap;
     }
-    render_map_ellipsoid_t *e = &s_map_ells[s_map_ell_count++];
+    render_map_ellipsoid_t *e = &l->v[l->n++];
     memcpy(e->centre, c, sizeof(e->centre));
     memcpy(e->ax, ax, sizeof(e->ax));
     memcpy(e->ay, ay, sizeof(e->ay));
@@ -711,7 +720,7 @@ static void plant_point(const plant_frame_t *f, float lx, float ly, float lz, fl
 }
 
 static int plant_full(void) {
-    return s_map_ell_count >= plant_ell_end;
+    return s_ell_target->n >= plant_ell_end;
 }
 
 static void plant_ellipsoid(const plant_frame_t *f, float off, float rxy, float rz,
@@ -889,7 +898,7 @@ static void map_plants(int row, int col, int idx, const map_area_element_t *e,
 
 /* Every plant cell within PLANT_RADIUS, ring by ring outwards. */
 static void map_all_plants(int crow, int ccol) {
-    plant_ell_end = s_map_ell_count + PLANT_ELL_BUDGET;
+    plant_ell_end = s_ell_target->n + PLANT_ELL_BUDGET;
     for (int ring = 0; ring <= PLANT_RADIUS && !plant_full(); ring++) {
         plant_lod = ring <= 1 ? 64 : 64 / ring;
         for (int row = crow - ring; row <= crow + ring; row++) {
@@ -987,21 +996,123 @@ static void map_element_roofs(int row, int col, int idx, const map_area_element_
     }
 }
 
+/* Grass and plants around (crow, ccol) into s_ell_target. Reads only the
+ * map, so it runs off the main thread. */
+static void build_vegetation(int crow, int ccol) {
+    for (int row = crow - GRASS_RADIUS; row <= crow + GRASS_RADIUS; row++) {
+        for (int col = ccol - GRASS_RADIUS; col <= ccol + GRASS_RADIUS; col++) {
+            if (row < 0 || col < 0 || row >= MAP_GRID || col >= MAP_GRID) continue;
+            uint16_t idx = new_map[row][col];
+            if (idx == 0xFFFF) continue;
+            int ring = abs(row - crow) > abs(col - ccol) ? abs(row - crow) : abs(col - ccol);
+            float cx = (float)((col - 64) * MAP_CELL);
+            float cz = (float)((row - 64) * MAP_CELL);
+            for (; (int)idx < top_of_map_elements; idx++) {
+                const map_area_element_t *e = &map_elements[idx];
+                if (is_grass_material(e->material))
+                    map_grass(cx, cz, idx, e, ring);
+                if ((uint16_t)e->code_index_p1 & 0x8000) break;
+            }
+        }
+    }
+    map_all_plants(crow, ccol);
+}
+
+static platform_sem_t *s_veg_lock, *s_veg_wake;
+static int s_veg_thread = -1;         /* -1 not tried, 0 none, 1 running */
+static int s_veg_req_row, s_veg_req_col, s_veg_req_map;
+static unsigned s_veg_req_id;
+static int s_veg_ready_map, s_veg_has_ready;
+
+static void vegetation_thread(void *arg) {
+    (void)arg;
+    unsigned done = 0;
+    for (;;) {
+        platform_sem_wait(s_veg_wake);
+        platform_sem_wait(s_veg_lock);
+        unsigned id = s_veg_req_id;
+        int row = s_veg_req_row, col = s_veg_req_col, key = s_veg_req_map;
+        platform_sem_post(s_veg_lock);
+        if (id == done) continue;
+
+        clock_t t0 = clock();
+        s_veg_work->n = 0;
+        s_ell_target = s_veg_work;
+        build_vegetation(row, col);
+        DBG_LOG(2, "[MAP3D] vegetation %d ellipsoids in %ld ms\n", s_veg_work->n,
+                (long)((clock() - t0) * 1000 / CLOCKS_PER_SEC));
+        done = id;
+
+        platform_sem_wait(s_veg_lock);
+        ell_list_t *t = s_veg_ready;
+        s_veg_ready = s_veg_work;
+        s_veg_work = t;
+        s_veg_ready_map = key;
+        s_veg_has_ready = 1;
+        platform_sem_post(s_veg_lock);
+    }
+}
+
+static void request_vegetation(int crow, int ccol) {
+    if (s_veg_thread < 0) {
+        s_veg_thread = 0;
+        s_veg_lock = platform_sem_create(1);
+        s_veg_wake = platform_sem_create(0);
+        if (s_veg_lock && s_veg_wake && platform_cpu_count() > 1 &&
+            platform_thread_start("ecs_vegetation", vegetation_thread, NULL,
+                                  PLATFORM_THREAD_BACKGROUND, -1))
+            s_veg_thread = 1;
+    }
+    if (s_veg_thread == 0) {
+        s_veg_front->n = 0;
+        s_ell_target = s_veg_front;
+        build_vegetation(crow, ccol);
+        return;
+    }
+    platform_sem_wait(s_veg_lock);
+    s_veg_req_row = crow;
+    s_veg_req_col = ccol;
+    s_veg_req_map = top_of_map_elements;
+    s_veg_req_id++;
+    platform_sem_post(s_veg_lock);
+    platform_sem_post(s_veg_wake);
+}
+
+/* Takes a finished vegetation list; drops the shown one when the map it was
+ * grown from has been replaced. Returns true when the front list changed. */
+static int collect_vegetation(void) {
+    if (s_veg_thread != 1) return 0;
+    int changed = 0;
+    platform_sem_wait(s_veg_lock);
+    if (s_veg_has_ready) {
+        s_veg_has_ready = 0;
+        if (s_veg_ready_map == top_of_map_elements) {
+            ell_list_t *t = s_veg_front;
+            s_veg_front = s_veg_ready;
+            s_veg_ready = t;
+            changed = 1;
+        }
+    }
+    platform_sem_post(s_veg_lock);
+    return changed;
+}
+
 static void build_map_mesh(void) {
-    clock_t t0 = clock();
     int ccol = (view_pos.X >> 9) + 64;
     int crow = (view_pos.Z >> 9) + 64;
+
+    if (collect_vegetation()) s_map_gen++;
 
     if (s_map_built_for == top_of_map_elements &&
         s_map_centre_row == crow && s_map_centre_col == ccol &&
         s_map_count > 0)
         return;
 
+    if (s_map_built_for != top_of_map_elements) s_veg_front->n = 0;
     s_map_built_for  = top_of_map_elements;
     s_map_centre_row = crow;
     s_map_centre_col = ccol;
     s_map_count = 0;
-    s_map_ell_count = 0;
     s_map_gen++;
 
     int r0 = crow - MAP_VIEW_RADIUS, r1 = crow + MAP_VIEW_RADIUS;
@@ -1022,15 +1133,11 @@ static void build_map_mesh(void) {
                 const map_area_element_t *e = &map_elements[idx];
                 map_prism(cx, cz, idx, e);
                 map_element_roofs(row, col, idx, e);
-                int ring = abs(row - crow) > abs(col - ccol) ? abs(row - crow) : abs(col - ccol);
-                if (ring <= GRASS_RADIUS && is_grass_material(e->material))
-                    map_grass(cx, cz, idx, e, ring);
                 if ((uint16_t)e->code_index_p1 & 0x8000) break;
             }
         }
     }
-    map_all_plants(crow, ccol);
-    DBG_LOG(2, "[MAP3D] verts=%d ellipsoids=%d ms=%ld\n", s_map_count, s_map_ell_count, (long)((clock() - t0) * 1000 / CLOCKS_PER_SEC));
+    request_vegetation(crow, ccol);
 }
 
 /* ── Frame ────────────────────────────────────────────────── */
@@ -1050,8 +1157,8 @@ void render_frame_begin(void) {
     if (render_map3d) build_map_mesh();
     render_frame.map_verts = render_map3d ? s_map_verts : NULL;
     render_frame.map_count = render_map3d ? s_map_count : 0;
-    render_frame.map_ells = render_map3d ? s_map_ells : NULL;
-    render_frame.map_ell_count = render_map3d ? s_map_ell_count : 0;
+    render_frame.map_ells = render_map3d ? s_veg_front->v : NULL;
+    render_frame.map_ell_count = render_map3d ? s_veg_front->n : 0;
     render_frame.map_gen = s_map_gen;
 
     render_gl_frame_begin();
