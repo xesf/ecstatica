@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.9.7] - 2026-10-27
+
+### Added
+- Runs the 2026 re-release of both games (GOG, Steam) and its demos from their folders as installed: point the game at the folder that holds `Code/`. Sound effects, speech and MIDI music come from its `Audio/` folder, E2 palettes from `Views/ErPalLut`, and the two new script tokens it uses work. `make e1-neo` / `make e2-neo` run the full release in place, `make e1-neo-demo` / `make e2-neo-demo` the demos.
+- Wide screens with the re-release data. The original 4:3 view stays in the middle, and the re-release's wider renders of each camera fill the sides, depth included, so actors still go behind the scenery there. Settings → Enhanced → Aspect Ratio picks 4:3, 16:10, 16:9 (the default), 21:9 or 32:9 on desktop. The demos reach 16:9 and the Vita stays at 16:9, which fits its screen. Set it in `ecstatica.cfg` with `aspect_ratio = 21:9`, or for one run with `ECSTATICA_WIDESCREEN` (or `WIDE=` in make).
+- 3D Map (OpenGL): the world's block prisms instead of one flat square per cell, coloured from the pre-rendered art; roofs from the original `DrawRoof` scripts; E2's face textures; grass, bushes and trees grown like the re-release's; and, with the E1 re-release, its sky and dry-stone walls. `ECSTATICA_MAP3D=1` turns the view on without the menu.
+
+### Changed
+- 3D Map (OpenGL): plants are cheaper to draw, and grow on a background thread when the hero crosses a cell. Camera 87 of the E1 demo goes from 8 to 60 fps.
+
+### Fixed
+- Loading an actor file no longer cuts parts out of actors already loaded. With the re-release, which loads one file per actor, Joe's horse in E2's opening scene lost most of its parts and rode off without Ecstatica.
+- E2 textures keep their pixels. They were skipped on load, so textured faces had no image.
+
 ## [0.9.6] - 2026-10-13
 
 ### Added
