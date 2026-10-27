@@ -1,10 +1,13 @@
 logs.txt
+data/
 data/e1/**
 data/e1-dos/**
 data/e2/**
 
 decomp/ida/ECSTATIC.EXE
 decomp/ida/E2WIN95.EXE
+decomp/ida/Ecstatica.exe
+decomp/ida/Ecstatica II.exe
 *.id0
 *.id1
 *.id2
@@ -113,3 +116,4 @@ platforms/vita/build/
 dist/
 ecstatica-dos.zip
 ecstatica-win9x.zip
+.claude/
