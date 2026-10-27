@@ -51,7 +51,7 @@ unsigned int sceUserMainThreadStackSize = 1024 * 1024;
 /* CDRAM blocks are allocated in 256 KB units. */
 #define FB_BYTES      ((SCREEN_W * SCREEN_H * 4 + 0x3FFFF) & ~0x3FFFF)
 
-#define MAX_RENDER_W  WIDE_SCREEN_WIDTH
+#define MAX_RENDER_W  WIDE_SCREEN_MAX_WIDTH
 #define MAX_RENDER_H  480
 
 #define PKEY_TABLE_SIZE 256

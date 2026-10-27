@@ -3,7 +3,7 @@
 Decompilation and portable C99 reimplementation of **Ecstatica 1 & 2**, the 1994/1997 ellipsoid-rendered adventure games by Andrew Spencer Studios.
 
 ## Buy the games
-
+ 
 Both games are back on sale, more than 30 years after the original Ecstatica.
 SNEG and Andrew Spencer Studios release them on **26 October 2026**. It is the
 first digital release of Ecstatica II. This project needs the game data, so
@@ -172,10 +172,12 @@ The modern re-release folders (`Code/`, `Views/`, `Graphics/`, `Text/`) work
 as they are installed: point the game at the folder that holds `Code/`.
 Sound effects, speech and MIDI music come from its `Audio/` folder, and its
 bundled GeneralUser GS soundfont plays the music on Linux, web, Android and iOS.
-It also runs in 16:9 on desktop and PS Vita: the original 4:3 view stays in the
-middle and the re-release's wider renders of each camera fill the sides. Switch
-back to 4:3 in Enhanced menu → Aspect Ratio, or with `widescreen = 0` in
-`ecstatica.cfg`.
+It also runs wider than 4:3 on desktop and PS Vita: the original 4:3 view stays
+in the middle and the re-release's wider renders of each camera fill the sides.
+16:9 is the default. The full release (`Views/Modern`) also offers 16:10, 21:9
+and 32:9 on desktop; the demos (`Views/Fallback`) reach 16:9, and the Vita stays
+at 16:9. Pick one in Enhanced menu → Aspect Ratio, or with
+`aspect_ratio = 21:9` (or `4:3`) in `ecstatica.cfg`.
 
 `.FAN` archives hold game resources (actors, graphics, scripts).
 

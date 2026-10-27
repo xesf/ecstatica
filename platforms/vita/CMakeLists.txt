@@ -60,9 +60,12 @@ function(ecstatica_vpk game title_id app_name)
                    ${SRC_DIR}/platforms/third_party/zstddeclib.c)
     target_include_directories(${exe} PRIVATE ${SRC_DIR})
     set_property(TARGET ${exe} PROPERTY C_STANDARD 99)
-    # ECS_WIDESCREEN: the 16:9 mode for the re-release data, which fits the
-    # 960x544 panel exactly.
-    target_compile_definitions(${exe} PRIVATE VITA_GAME_DIR="${game}" ECS_WIDESCREEN)
+    # ECS_WIDESCREEN: the wide modes for the re-release data, capped at 16:9
+    # (WIDE_SCREEN_MAX_WIDTH), which fits the 960x544 panel exactly.
+    # ECS_WIDE_VIEW_SMALL: read the 1280x360 wide views, a 3840x1080 one is
+    # too slow to decode on every camera cut.
+    target_compile_definitions(${exe} PRIVATE VITA_GAME_DIR="${game}" ECS_WIDESCREEN
+                               WIDE_SCREEN_MAX_WIDTH=854 ECS_WIDE_VIEW_SMALL)
     set_source_files_properties(${SRC_DIR}/platforms/third_party/zstddeclib.c
         PROPERTIES COMPILE_OPTIONS "-w")
 

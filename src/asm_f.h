@@ -61,14 +61,21 @@ int file_read_remaster_palette(int camera, int intro, uint8_t out[768]);
  * Returns 0 when there is no usable file. */
 int file_load_remaster_sound(int16_t sound_index);
 
-/* True when the data carries the re-release's wide views (Views/Fallback). */
+/* True when the data carries the re-release's wide views (Views/Modern, or
+ * Views/Fallback in the demos). */
 int file_wide_views_available(void);
 
-/* The re-release's wide view of `camera`: the same camera at 2/3 scale, 320
- * rows and up to 640 columns centred on the original view (2:1). Palette
- * indices, and depth in mask_map units with 0xFFFF for sky. Returns the width,
- * or 0 when the build has no zstd or the file is missing. */
-int file_read_wide_view(int camera, uint8_t img[640 * 320], uint16_t depth[640 * 320]);
+/* Width in original columns (480 rows) the wide views cover, centred: 1706
+ * (32:9) for Views/Modern, 960 (2:1) for Views/Fallback, 0 without them. */
+int file_wide_view_reach(void);
+
+/* The re-release's wide view of `camera` (the same camera, scaled and centred,
+ * covering 2:1 in the demos and 32:9 in the full release), sampled into a
+ * `width` x 480 screen whose middle 640 columns hold the original view. Writes
+ * palette indices to `img` and mask_map depth to `mask` for the columns either
+ * side of the middle the view reaches; the rest is left as it was. Returns 0
+ * when the build has no zstd or the file is missing. */
+int file_read_wide_view(int camera, int width, char *img, int16_t *mask);
 
 /* Prefix prepended to every relative asset path. Platforms without a
  * per-process working directory (openfpgaOS) set it to their data mount

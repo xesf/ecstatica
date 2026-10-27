@@ -15,8 +15,9 @@
 #   make e2-images  — same, opening on the raw image browser
 #   make e1-images  — same, opening on the raw image browser
 #   make e2-pointcloud / e1-pointcloud — write pointcloud.ply from every view
+#   make e1-neo / e2-neo — build + run the full re-release in place
 #   make e1-neo-demo / e2-neo-demo — build + run the re-release demo in place
-#                    (WIDE=1 for the 16:9 mode, WIDE=0 for 4:3)
+#                    (both take WIDE=0 for 4:3, WIDE=1 for 16:9, or a ratio: WIDE=21:9)
 #   make clean      — remove build artifacts
 #   make dump       — regenerate wdump text for E2WIN95P.EXE
 #
@@ -70,7 +71,9 @@ E2_DIR   		= data/e2
 E1_DIR   		= data/e1/W
 E1_DIR_DOS   	= data/e1
 E1_DIR_ORIG		= data/e1-dos
-# The re-release ("Neo") demos, run in place: the binary is not copied in.
+# The re-release ("Neo") and its demos, run in place: the binary is not copied in.
+E1_NEO_DIR		= data/Ecstatica
+E2_NEO_DIR		= data/Ecstatica II
 E1_NEO_DEMO_DIR	= data/Ecstatica Demo
 E2_NEO_DEMO_DIR	= data/Ecstatica II Demo
 
@@ -92,7 +95,7 @@ WIN9X_EXE   = platforms/win9x/ecstatica.exe
 WINE       ?= wine
 
 .PHONY: ios-configure
-.PHONY: all run e1 e2 e1-neo-demo e2-neo-demo e1-viewer e2-viewer e1-scenes e2-scenes e1-images e2-images e1-pointcloud e2-pointcloud build clean dump \
+.PHONY: all run e1 e2 e1-neo e2-neo e1-neo-demo e2-neo-demo e1-viewer e2-viewer e1-scenes e2-scenes e1-images e2-images e1-pointcloud e2-pointcloud build clean dump \
         dos dos-e1 dos-e2 dos-clean win9x win9x-e1 win9x-e2 win9x-clean \
         psp psp-release psp-install psp-clean vita vita-clean \
         web web-serve web-clean android android-install android-clean \
@@ -121,6 +124,12 @@ e1: $(BUILT)
 
 # WIDE overrides the saved Aspect Ratio setting for this run.
 NEO_ENV = $(if $(WIDE),ECSTATICA_WIDESCREEN=$(WIDE))
+
+e1-neo: $(BUILT)
+	cd "$(E1_NEO_DIR)" && $(NEO_ENV) "$(CURDIR)/$(BUILT)"
+
+e2-neo: $(BUILT)
+	cd "$(E2_NEO_DIR)" && $(NEO_ENV) "$(CURDIR)/$(BUILT)"
 
 e1-neo-demo: $(BUILT)
 	cd "$(E1_NEO_DEMO_DIR)" && $(NEO_ENV) "$(CURDIR)/$(BUILT)"

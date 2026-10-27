@@ -75,7 +75,7 @@ target_compile_definitions(ecstatica PRIVATE
     ECS_WIDESCREEN
 )
 
-# Vendored zstd decoder (Views/Fallback); its own warnings are not ours.
+# Vendored zstd decoder (Views/Modern, Views/Fallback); its own warnings are not ours.
 if(NOT MSVC)
     set_source_files_properties(platforms/third_party/zstddeclib.c
         PROPERTIES COMPILE_OPTIONS "-w")

@@ -646,7 +646,10 @@ static void settings_get_value(int id, char *buf, int bufsz) {
         snprintf(buf, bufsz, "%s", speed_mode_names[e1_speed_mode_step()]);
         break;
     case SETT_WIDESCREEN:
-        snprintf(buf, bufsz, "%s", widescreen ? "16:9" : "4:3 (Original)");
+        if (aspect_ratio_in_use() == ASPECT_4_3)
+            snprintf(buf, bufsz, "4:3 (Original)");
+        else
+            snprintf(buf, bufsz, "%s", aspect_ratio_name(aspect_ratio_in_use()));
         break;
     }
 }
@@ -718,10 +721,15 @@ static void settings_adjust(int id, int dir) {
     case SETT_SPEED_MODE:
         e1_cycle_speed_mode(dir);
         break;
-    case SETT_WIDESCREEN:
-        set_widescreen(!widescreen);
+    case SETT_WIDESCREEN: {
+        /* Steps through the ratios this data and build can show, wrapping. */
+        int n = aspect_ratio_count(), index = aspect_ratio_in_use();
+        do index = ((index + dir) % n + n) % n;
+        while (!aspect_ratio_available(index));
+        set_aspect_ratio(index);
         save_port_settings();
         break;
+    }
     }
 }
 

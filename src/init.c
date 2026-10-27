@@ -195,7 +195,7 @@ void init(void) {
     detect_game_version();
     init_data_roots();
 
-    /* Before the boot resolution is picked below: widescreen sets its width. */
+    /* Before the boot resolution is picked below: the aspect ratio sets its width. */
     load_port_settings();
 
     /* E1 data predating the Win95 release ships only 320x200 backgrounds, so
@@ -443,7 +443,7 @@ void set_up_bitmaps(void) {
      * is the only widener and bails out when low_res_only, so a low-res-only
      * session saves 2.44 MB. */
 #ifdef ECS_WIDESCREEN
-    int32_t plane_pixels = (low_res_only ? (320 * 200) : (WIDE_SCREEN_WIDTH * 480))
+    int32_t plane_pixels = (low_res_only ? (320 * 200) : (WIDE_SCREEN_MAX_WIDTH * 480))
                          + BITMAP_SLACK;
 #else
     int32_t plane_pixels = (low_res_only ? (320 * 200) : (640 * 480))

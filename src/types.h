@@ -42,9 +42,12 @@ extern int game_version;
  * planes to the active mode and keeps the same margin. */
 #define BITMAP_SLACK (BITMAP_SIZE - 640 * 480)
 
-/* Width of the 480-row screen in widescreen mode (16:9). The original 640
- * columns sit in the middle; the re-release's wide views fill the sides. */
-#define WIDE_SCREEN_WIDTH 854
+/* Widest 480-row screen (32:9, as far as the full re-release's wide views
+ * reach). The original 640 columns sit in the middle; the wide views fill the
+ * sides. A build can lower it to cap the Aspect Ratio setting. */
+#ifndef WIDE_SCREEN_MAX_WIDTH
+#define WIDE_SCREEN_MAX_WIDTH 1706
+#endif
 
 #define ACTOR_POOL_SIZE      200
 #define PART_POOL_SIZE      4000

@@ -3201,10 +3201,11 @@ void set_enhanced_graphics(int enabled) {
 
 /* The 640x480 mode is rebuilt at the new width, the same way a resolution
  * switch rebuilds it. */
-void set_widescreen(int enabled) {
-    if (widescreen == (enabled != 0)) return;
-    widescreen = (enabled != 0);
-    if (mode_svga) apply_resolution(1);
+void set_aspect_ratio(int index) {
+    if (index == aspect_ratio) return;
+    int before = aspect_ratio_in_use();
+    aspect_ratio = index;
+    if (mode_svga && aspect_ratio_in_use() != before) apply_resolution(1);
 }
 
 static void apply_resolution(int enabled) {

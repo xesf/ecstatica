@@ -207,6 +207,7 @@ Game data lives in `data/` (not committed):
 - `data/e1/` — Ecstatica 1 bundled DOS version (320x200)
 - `data/e1-dos/` — Ecstatica 1 original DOS release (320x200)
 - `data/e2/` — Ecstatica 2 Win95 (640x480) + DOS (320x200)
+- `data/Ecstatica/`, `data/Ecstatica II/` — full modern re-release (`make e1-neo` / `make e2-neo`)
 - `data/Ecstatica Demo/`, `data/Ecstatica II Demo/` — modern re-release demos
 
 The re-release keeps the original files in a new tree: loose `.fan` files under
@@ -220,12 +221,18 @@ palettes from `Views/ErPalLut`. Its scripts use two new tokens,
 `docs/formats/remaster-files.md`.
 
 **Widescreen** (desktop and Vita builds, `ECS_WIDESCREEN`; on by default): with the re-release's
-`Views/Fallback` wide views, the 640x480 mode can run at `WIDE_SCREEN_WIDTH`
-(854, 16:9). `widen_background()` (topo.c) puts the original view in the middle
-and fills the sides from the wide view and its depth; `wide_margin()` and
-`read_screen_image()` (icon.c) keep 640-wide art and HUD placed. Turned off
-with `widescreen = 0` in `ecstatica.cfg`, the Enhanced menu's Aspect Ratio row,
-or `ECSTATICA_WIDESCREEN=0`. Original-release data always runs 4:3. The zstd decoder is vendored as
+wide views (`Views/Modern/<w>x<h>` in the full release, 32:9 at 1280x360 and
+3840x1080; `Views/Fallback` in the demos, 2:1), the 640x480 mode runs wider:
+`aspect_ratio` (icon.c) picks 4:3, 16:10, 16:9 (default), 21:9 or 32:9 (640 to
+1706 columns), falling back to the widest the wide views reach and the build's
+`WIDE_SCREEN_MAX_WIDTH` allows (854 on Vita). `widen_background()` (topo.c) puts the original
+view in the middle and `file_read_wide_view()` (file.c) fills the sides from the
+wide view and its depth. Desktop reads the smallest set at least 480 rows tall,
+Vita (`ECS_WIDE_VIEW_SMALL`) the smallest; `wide_margin()` and
+`read_screen_image()` (icon.c) keep 640-wide art and HUD placed. Set with
+`aspect_ratio = 21:9` in `ecstatica.cfg` (the older `widescreen = 0|1` still
+reads as 4:3 or 16:9), the Enhanced menu's Aspect Ratio row, or
+`ECSTATICA_WIDESCREEN=0|1|<ratio>`. Original-release data always runs 4:3. The zstd decoder is vendored as
 `platforms/third_party/zstddeclib.c` (zstd 1.5.6, BSD).
 
 `.FAN` archives contain game resources (actors, graphics, scripts).

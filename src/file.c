@@ -734,81 +734,195 @@ int file_read_remaster_palette(int camera, int intro, uint8_t out[768]) {
     return 0;
 }
 
+/* Where the wide views live: Views/Modern/<w>x<h> in the full re-release (one
+ * set per resolution), Views/Fallback in its demos. "" when there are none. */
+static char wide_dir[64];
+/* Original columns the set covers: 1706 (32:9) for Modern, 960 (2:1) for
+ * Fallback. */
+static int wide_reach;
+
+typedef struct {
+    unsigned best_w, best_h;
+} modern_pick_t;
+
+/* The smallest set at least 480 rows tall, so it is scaled down, not up; the
+ * tallest one when every set is shorter. ECS_WIDE_VIEW_SMALL takes the
+ * smallest set, for handhelds where decoding a 3840x1080 view is slow. */
+static void pick_modern_set(void *ctx, const char *name) {
+    modern_pick_t *p = (modern_pick_t *)ctx;
+    unsigned w, h;
+    char tail;
+    if (sscanf(name, "%ux%u%c", &w, &h, &tail) != 2 || !w || !h) return;
+    int better;
+    if (!p->best_h) {
+        better = 1;
+    } else {
+#ifdef ECS_WIDE_VIEW_SMALL
+        better = h < p->best_h;
+#else
+        int fits = h >= 480, best_fits = p->best_h >= 480;
+        better = fits != best_fits ? fits : (fits ? h < p->best_h : h > p->best_h);
+#endif
+    }
+    if (better) {
+        p->best_w = w;
+        p->best_h = h;
+    }
+}
+
 int file_wide_views_available(void) {
     static int known = -1;
     if (known < 0) {
         char resolved[512];
-        known = remaster_layout &&
-                resolve_ci("", "Views/Fallback", resolved, sizeof(resolved));
+        modern_pick_t pick = { 0, 0 };
+        wide_dir[0] = '\0';
+        if (remaster_layout &&
+            file_list_dir("", "Views/Modern", resolved, sizeof(resolved), pick_modern_set, &pick) &&
+            pick.best_h) {
+            snprintf(wide_dir, sizeof(wide_dir), "Views/Modern/%ux%u", pick.best_w, pick.best_h);
+            wide_reach = (int)(pick.best_w * 480 / pick.best_h);
+        } else if (remaster_layout && resolve_ci("", "Views/Fallback", resolved, sizeof(resolved))) {
+            snprintf(wide_dir, sizeof(wide_dir), "Views/Fallback");
+            wide_reach = 960;
+        }
+        known = wide_dir[0] != '\0';
+        if (known) DBG_LOG(1, "[FILE] wide views: %s\n", wide_dir);
     }
     return known;
 }
 
+int file_wide_view_reach(void) {
+    return file_wide_views_available() ? wide_reach : 0;
+}
+
 #ifdef ECS_WIDESCREEN
 /* platforms/third_party/zstddeclib.c */
-size_t ZSTD_decompress(void *dst, size_t dst_capacity, const void *src, size_t src_size);
+typedef struct { const void *src; size_t size; size_t pos; } ZSTD_inBuffer;
+typedef struct { void *dst; size_t size; size_t pos; } ZSTD_outBuffer;
+typedef struct ZSTD_DCtx_s ZSTD_DStream;
+ZSTD_DStream *ZSTD_createDStream(void);
+size_t ZSTD_freeDStream(ZSTD_DStream *zds);
+size_t ZSTD_initDStream(ZSTD_DStream *zds);
+size_t ZSTD_decompressStream(ZSTD_DStream *zds, ZSTD_outBuffer *output, ZSTD_inBuffer *input);
 unsigned ZSTD_isError(size_t code);
 
-/* Views/Fallback/NNNN ("ErBgView"): a 0x48-byte header, then zstd frames in
- * (image, depth) pairs; only the first pair is the camera's view. The depth is
- * stored as byte planes, low byte first: two planes (0xFFFF is sky) or, for a
- * few deep views, three making a signed 24-bit value (-1 is sky). */
-int file_read_wide_view(int camera, uint8_t img[640 * 320], uint16_t depth[640 * 320]) {
-    char path[64];
-    snprintf(path, sizeof(path), "Views/Fallback/%04d", camera);
+/* The first `n` bytes of a zstd frame; a Modern view is stored from the centre
+ * out, so a screen narrower than the set needs only the start of it. */
+static int zstd_prefix(void *dst, size_t n, const void *src, size_t src_size) {
+    ZSTD_DStream *z = ZSTD_createDStream();
+    if (!z) return 0;
+    ZSTD_inBuffer in = { src, src_size, 0 };
+    ZSTD_outBuffer out = { dst, n, 0 };
+    int ok = !ZSTD_isError(ZSTD_initDStream(z));
+    while (ok && out.pos < n) {
+        size_t before = in.pos + out.pos;
+        size_t r = ZSTD_decompressStream(z, &out, &in);
+        ok = !ZSTD_isError(r) && (r != 0 || out.pos == n) && in.pos + out.pos != before;
+    }
+    ZSTD_freeDStream(z);
+    return ok;
+}
+
+static int floor_div(int a, int b) {
+    return a >= 0 ? a / b : -((-a + b - 1) / b);
+}
+
+/* ErBgView files (docs/formats/remaster-files.md): a 0x48-byte header, then
+ * zstd frames in (image, depth) pairs; only the first pair is the camera's
+ * view. Either way the view is the same camera with its `h` rows covering the
+ * original 480, centred.
+ *   v1 (Views/Fallback): row-major image; the depth as byte planes over the
+ *       whole image, low byte first.
+ *   v2 (Views/Modern): stored by column, from the centre out (c-1, c, c-2,
+ *       c+1, ... with c = (w+1)/2), each column top to bottom; a depth column
+ *       is its byte planes one after the other.
+ * Depth is two planes (0xFFFF is sky) or, for a few deep views, three making a
+ * signed 24-bit value (-1 is sky). */
+int file_read_wide_view(int camera, int width, char *img, int16_t *mask) {
+    if (!file_wide_views_available()) return 0;
+    char path[96];
+    snprintf(path, sizeof(path), "%s/%04d", wide_dir, camera);
     FILE *f = fopen_ci(path, "rb");
     if (!f) return 0;
 
     uint8_t h[0x48];
     int ok = fread(h, 1, sizeof(h), f) == sizeof(h) && memcmp(h, "ErBgView", 8) == 0 &&
-             le32(h + 8) == 1 && le32(h + 12) == 0x48;
+             le32(h + 12) == 0x48;
+    uint32_t version = le32(h + 8);
     int w = h[16] | h[17] << 8, ht = h[18] | h[19] << 8;
     uint32_t pixels = (uint32_t)w * (uint32_t)ht;
     uint32_t planes_n = pixels ? le32(h + 28) / pixels : 0;
-    ok = ok && w > 0 && w <= 640 && ht == 320 && le32(h + 24) == pixels &&
-         (planes_n == 2 || planes_n == 3) && le32(h + 28) == pixels * planes_n;
+    ok = ok && (version == 1 || version == 2) && w > 0 && ht > 0 &&
+         le32(h + 24) == pixels && (planes_n == 2 || planes_n == 3) &&
+         le32(h + 28) == pixels * planes_n;
+    int by_column = version == 2;
+
+    /* Columns of the view each screen column samples, centred on both. */
+    int c = by_column ? (w + 1) / 2 : w / 2;
+    int sx_lo = c + floor_div(-(width / 2) * ht, 480);
+    int sx_hi = c + floor_div((width - 1 - width / 2) * ht, 480);
+    size_t cols = (size_t)w;
+    if (by_column) {
+        int left = sx_lo < 0 ? 0 : sx_lo, right = sx_hi >= w ? w - 1 : sx_hi;
+        int k_lo = 2 * (c - 1 - left), k_hi = 2 * (right - c) + 1;
+        cols = (size_t)(k_lo > k_hi ? k_lo : k_hi) + 1;
+        if (cols > (size_t)w) cols = (size_t)w;
+    }
 
     uint32_t img_size = le32(h + 36), depth_size = le32(h + 40);
-    uint8_t *packed = NULL;
-    uint8_t *planes = NULL;
+    uint8_t *packed = NULL, *view = NULL, *planes = NULL;
     if (ok) {
         packed = (uint8_t *)malloc((size_t)img_size + depth_size);
-        planes = (uint8_t *)malloc((size_t)pixels * planes_n);
-        ok = packed && planes &&
-             fread(packed, 1, (size_t)img_size + depth_size, f) == (size_t)img_size + depth_size;
+        view = (uint8_t *)malloc(cols * ht);
+        planes = (uint8_t *)malloc(cols * ht * planes_n);
+        ok = packed && view && planes &&
+             fread(packed, 1, (size_t)img_size + depth_size, f) == (size_t)img_size + depth_size &&
+             zstd_prefix(view, cols * ht, packed, img_size) &&
+             zstd_prefix(planes, cols * ht * planes_n, packed + img_size, depth_size);
     }
     fclose(f);
-
-    if (ok) {
-        size_t n = ZSTD_decompress(img, pixels, packed, img_size);
-        ok = !ZSTD_isError(n) && n == pixels;
-    }
-    if (ok) {
-        size_t n = ZSTD_decompress(planes, (size_t)pixels * planes_n, packed + img_size, depth_size);
-        ok = !ZSTD_isError(n) && n == (size_t)pixels * planes_n;
-    }
-    if (ok) {
-        for (uint32_t i = 0; i < pixels; i++) {
-            int32_t d = planes[i] | planes[pixels + i] << 8;
-            if (planes_n == 3) {
-                d |= (int32_t)planes[2 * pixels + i] << 16;
-                if (d & 0x800000) d -= 0x1000000;
-                depth[i] = d < 0 ? 0xFFFF : (d > 0xFFFE ? 0xFFFE : (uint16_t)d);
-            } else {
-                depth[i] = (uint16_t)d;
-            }
-        }
-    } else {
-        DBG_LOG(1, "[FILE] %s: unreadable wide view\n", path);
-    }
-
     free(packed);
+
+    int left = (width - 640) / 2;
+    for (int y = 0; ok && y < 480; y++) {
+        int sy = y * ht / 480;
+        char *row = img + y * width;
+        int16_t *mrow = mask + y * width;
+        for (int x = 0; x < width; x++) {
+            if (x == left) x += 640;
+            if (x >= width) break;
+            int sx = c + floor_div((x - width / 2) * ht, 480);
+            if (sx < 0 || sx >= w) continue;
+
+            size_t at, plane;
+            if (by_column) {
+                size_t k = sx < c ? (size_t)(2 * (c - 1 - sx)) : (size_t)(2 * (sx - c) + 1);
+                row[x] = (char)view[k * ht + sy];
+                at = k * ht * planes_n + sy;
+                plane = ht;
+            } else {
+                at = (size_t)sy * w + sx;
+                row[x] = (char)view[at];
+                plane = pixels;
+            }
+            int32_t d = planes[at] | planes[at + plane] << 8;
+            if (planes_n == 3) {
+                d |= (int32_t)planes[at + 2 * plane] << 16;
+                if (d & 0x800000) d -= 0x1000000;
+                if (d < 0) d = 0xFFFF;
+            }
+            mrow[x] = d > 0x7FFC ? 0x7FFC : (int16_t)d;
+        }
+    }
+    if (!ok) DBG_LOG(1, "[FILE] %s: unreadable wide view\n", path);
+
+    free(view);
     free(planes);
-    return ok ? w : 0;
+    return ok;
 }
 #else
-int file_read_wide_view(int camera, uint8_t img[640 * 320], uint16_t depth[640 * 320]) {
-    (void)camera; (void)img; (void)depth;
+int file_read_wide_view(int camera, int width, char *img, int16_t *mask) {
+    (void)camera; (void)width; (void)img; (void)mask;
     return 0;
 }
 #endif
@@ -1816,8 +1930,12 @@ void load_a_repertoire(int rep_index) {
 #define PORT_SETTINGS_FILE "ecstatica.cfg"
 
 static void apply_port_setting_overrides(void) {
+    /* 0 or 1 (4:3 or 16:9), or a ratio name such as 21:9. */
     const char *wide = getenv("ECSTATICA_WIDESCREEN");
-    if (wide && *wide) widescreen = atoi(wide) != 0;
+    if (wide && *wide) {
+        int index = aspect_ratio_from_name(wide);
+        aspect_ratio = index >= 0 ? index : (atoi(wide) ? ASPECT_16_9 : ASPECT_4_3);
+    }
     const char *map3d = getenv("ECSTATICA_MAP3D");
     if (map3d && *map3d) render_map3d = atoi(map3d) != 0;
 }
@@ -1832,6 +1950,7 @@ void load_port_settings(void) {
     char line[128];
     while (fgets(line, sizeof(line), f)) {
         int value;
+        char name[16];
         if (sscanf(line, "subtitle_scale = %d", &value) == 1) {
             if (value < 1) value = 1;
             if (value > 2) value = 2;
@@ -1855,8 +1974,12 @@ void load_port_settings(void) {
             if (value < SCALE_PILLARBOX) value = SCALE_PILLARBOX;
             if (value > SCALE_STRETCH) value = SCALE_STRETCH;
             display_scale_mode = (int16_t)value;
+        } else if (sscanf(line, "aspect_ratio = %15s", name) == 1) {
+            int index = aspect_ratio_from_name(name);
+            if (index >= 0) aspect_ratio = index;
         } else if (sscanf(line, "widescreen = %d", &value) == 1) {
-            widescreen = (value != 0);
+            /* Before aspect_ratio: on meant 16:9. */
+            aspect_ratio = value ? ASPECT_16_9 : ASPECT_4_3;
         }
     }
     fclose(f);
@@ -1873,7 +1996,7 @@ void save_port_settings(void) {
     fprintf(f, "enhanced_light = %d\n", (int)render_enhanced_light);
     fprintf(f, "map3d = %d\n", (int)render_map3d);
     fprintf(f, "scale_mode = %d\n", (int)display_scale_mode);
-    fprintf(f, "widescreen = %d\n", widescreen);
+    fprintf(f, "aspect_ratio = %s\n", aspect_ratio_name(aspect_ratio));
     fclose(f);
 }
 

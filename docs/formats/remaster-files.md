@@ -1,4 +1,4 @@
-# Re-release files (`Views/ErPalLut`, `Views/Fallback/NNNN`, script tokens)
+# Re-release files (`Views/ErPalLut`, `Views/Modern`, `Views/Fallback`, script tokens)
 
 The modern re-release ships the original data in a new tree (see the Data Files
 section of `CLAUDE.md`) plus a few files of its own. All integers are
@@ -38,20 +38,23 @@ before each original palette are dropped; the port never reads them.
 The LUTs (one per palette, zstd) are a colour lookup for the re-release's own
 renderer. The port does not read them.
 
-## `Views/Fallback/NNNN` (`ErBgView`)
+## `Views/Modern/<w>x<h>/NNNN` and `Views/Fallback/NNNN` (`ErBgView`)
 
-A wider re-render of each camera, used by the widescreen mode. Reader:
-`file_read_wide_view()` in `src/file.c`; composited by `widen_background()` in
-`src/topo.c`.
+Wider re-renders of each camera, used by the widescreen mode. The full release
+ships `Views/Modern` with one directory per resolution (`1280x360` and
+`3840x1080`, both 32:9); its own executable can generate more sets there
+("Generated %u of %u camera sets in Views/Modern"). The demos ship a single 2:1
+set in `Views/Fallback`. Reader: `file_read_wide_view()` in `src/file.c`;
+composited by `widen_background()` in `src/topo.c`.
 
 ```
 char[8] magic "ErBgView"
-u32     version          # 1
+u32     version          # 1 in Views/Fallback, 2 in Views/Modern
 u32     header_size      # 0x48
-u16     width            # 640 (a few are narrower: 600, 427)
-u16     height           # 320
+u16     width            # set width; a few are narrower, see below
+u16     height           # set height (320 in Fallback, 360 or 1080 in Modern)
 u16     flags            # 526 (0x20E), or 782 (0x30E) with 24-bit depth
-u16     ?                # 3
+u16     ?                # 3 in Fallback, 1 in Modern
 u32     image_size       # width * height, decompressed
 u32     depth_size       # width * height * 2, or * 3
 u32     camera
@@ -59,16 +62,29 @@ u32     sizes[8]         # compressed sizes of up to 4 (image, depth) zstd pairs
 ```
 
 Only the first (image, depth) pair is the camera's view; the port ignores the
-other pairs.
+other pairs. E1 files carry four pairs, the E2 Modern files one.
 
 - **Image**: 8-bit indices in the camera's palette.
-- **Depth**: byte planes, all low bytes first. With two planes the value is in
-  the same units as the original `mask_map` heightmap (fit ≈ 1.0 × mask) and
-  0xFFFF is sky. With three planes it is a signed 24-bit value and -1 is sky.
-- **Geometry**: the same camera at exactly 2/3 scale, centred. The 320 rows
-  cover the original 480; 640 columns cover 960 original columns, a 2:1 field.
-  So a 16:9 screen (854×480) shows the original 640 columns in the middle and
-  107 columns either side from this image, scaled back up by 3/2.
+- **Depth**: two byte planes, low byte first, in the same units as the
+  original `mask_map` heightmap (fit ≈ 1.0 × mask), 0xFFFF is sky. A few deep
+  views have three planes, a signed 24-bit value where -1 is sky.
+- **Layout, version 1**: the image is row-major; each depth plane covers the
+  whole image.
+- **Layout, version 2**: stored by column, from the centre out. With
+  `c = (width + 1) / 2` the columns come in the order `c-1, c, c-2, c+1, ...`
+  (left, then right; an odd width has its extra column on the left), each top
+  to bottom. A depth column is its byte planes one after the other (`height`
+  low bytes, then `height` high bytes). So the start of each frame alone gives a
+  centred strip of any width, which the port uses to decompress only the
+  columns a screen shows.
+- **Geometry**: the same camera, scaled by `height / 480` and centred. The rows
+  cover the original 480 rows; the columns cover `width * 480 / height`
+  original columns: 960 (2:1) for Fallback, 1707 (32:9) for Modern. A 16:9
+  screen (854×480) shows the original 640 columns in the middle and 107 columns
+  either side from the wide view.
+- **Narrower views**: some cameras have narrower files (Fallback 600, 427;
+  Modern 1280x360 down to 480, i.e. no more than the original), centred the
+  same way. The screen columns past them stay black.
 
 ## Script tokens
 

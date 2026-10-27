@@ -639,38 +639,21 @@ static void raw_read(raw_src_t *src, void *dst, size_t n) {
 
 /* Widescreen: the original 640x480 view goes in the middle of the wider
  * plane, and the columns either side come from the re-release's wide view of
- * the same camera, scaled back up by 3/2. Its depth is in mask_map units, so
- * actors stay hidden behind the scenery out there too. Where the wide view has
- * nothing (no file, or a narrower one) the sides are black and hide nothing. */
+ * the same camera. Its depth is in mask_map units, so actors stay hidden
+ * behind the scenery out there too. Where the wide view has nothing (no file,
+ * or a narrower one) the sides are black and hide nothing. */
 void widen_background(const char *img, const int16_t *mask) {
-    static uint8_t side_img[640 * 320];
-    static uint16_t side_depth[640 * 320];
-    int side_w = file_read_wide_view(selected_camera, side_img, side_depth);
-
     int w = screen_width;
     int left = (w - 640) / 2;
     for (int y = 0; y < 480; y++) {
         char *row = bitmap[3] + y * w;
         int16_t *mrow = mask_map[2] + y * w;
+        memset(row, 0, w);
+        for (int x = 0; x < w; x++) mrow[x] = 0x7FFC;
         memcpy(row + left, img + y * 640, 640);
         memcpy(mrow + left, mask + y * 640, 640 * sizeof(int16_t));
-
-        const uint8_t *srow = side_img + (y * 2 / 3) * side_w;
-        const uint16_t *drow = side_depth + (y * 2 / 3) * side_w;
-        for (int x = 0; x < w; x++) {
-            if (x == left) x += 640;
-            if (x >= w) break;
-            /* Narrower wide views are centred too. */
-            int sx = ((x - w / 2) * 2 + 3 * side_w / 2) / 3;
-            if (sx < 0 || sx >= side_w) {
-                row[x] = 0;
-                mrow[x] = 0x7FFC;
-                continue;
-            }
-            row[x] = (char)srow[sx];
-            mrow[x] = drow[sx] > 0x7FFC ? 0x7FFC : (int16_t)drow[sx];
-        }
     }
+    file_read_wide_view(selected_camera, w, bitmap[3], mask_map[2]);
 }
 
 int load_raw(void) {
@@ -764,6 +747,7 @@ int load_raw(void) {
 
     if (stream) fclose(stream);
     if (widen) widen_background(wide_img, wide_mask);
+    DBG_LOG(2, "[LR] cam=%d loaded '%s'\n", selected_camera, source);
 
     PROF_BEGIN(PROF_VISMAP);
     load_visibility_map();
