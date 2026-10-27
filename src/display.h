@@ -163,6 +163,9 @@ extern int16_t screen_height;
 extern int16_t hires_width;
 extern int16_t hires_height;
 extern int16_t screen_centre_x;
+/* Width of the original view (320 or 640). The projection scales to it, not to
+ * screen_width: a wide screen adds columns either side, not a wider lens. */
+extern int16_t view_width;
 extern int16_t screen_centre_y;
 extern int16_t left_edge;
 extern int16_t right_edge;

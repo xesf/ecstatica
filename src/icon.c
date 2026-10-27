@@ -83,6 +83,7 @@ void set_vga_constants(void) {
     right_edge      = 320;
     bottom_edge     = 200;
     screen_centre_x = 160;
+    view_width      = 320;
     screen_centre_y = 100;
     rate_box_left   = 10;
     rate_box_top    = 20;
@@ -102,6 +103,7 @@ void set_svga_constants(void) {
     right_edge      = width;
     bottom_edge     = 480;
     screen_centre_x = width / 2;
+    view_width      = 640;
     screen_centre_y = 240;
     rate_box_left   = 10;
     rate_box_top    = 20;

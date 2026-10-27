@@ -58,7 +58,7 @@ static void project_clip_vtx(const clip_vtx_t *cv, vector_t *sc) {
     int vz = cv->z < 1 ? 1 : cv->z;
     int32_t coeff_x = zoom_factor / vz;
     int32_t coeff_y = coeff_x - (coeff_x >> 3);          /* 7/8 */
-    coeff_x = coeff_x * screen_width / 320;
+    coeff_x = coeff_x * view_width / 320;
     coeff_y = coeff_y * screen_height / 200;
 
     int32_t px = (coeff_x * (int32_t)cv->x) >> 10;

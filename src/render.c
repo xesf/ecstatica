@@ -92,11 +92,11 @@ static void build_view_matrix(float *m) {
 /**
  * Projection, derived from perspective_transform (display.c):
  *
- *   coeff_x    = zoom_factor / z,  scaled by screen_width/320
+ *   coeff_x    = zoom_factor / z,  scaled by view_width/320
  *   coeff_y    = coeff_x * 7/8,    scaled by screen_height/200
  *   pixel_x    = centre_x + (coeff_x * X >> 10) >> 4
  *
- * so  pixel_x - centre_x = kx * X / z  with  kx = zoom * (sw/320) / 16384.
+ * so  pixel_x - centre_x = kx * X / z  with  kx = zoom * (vw/320) / 16384.
  *
  * Depth is the ordinary perspective mapping: a linear z_ndc would need z² with
  * w = z. The background shader converts its linear int16 depth per pixel, so
@@ -110,7 +110,7 @@ static void build_proj_matrix(float *m) {
     float sw = (float)screen_width;
     float sh = (float)screen_height;
 
-    float kx = (float)zoom_factor * (sw / 320.0f) / 16384.0f;
+    float kx = (float)zoom_factor * ((float)view_width / 320.0f) / 16384.0f;
     float ky = (float)zoom_factor * 0.875f * (sh / 200.0f) / 16384.0f;
 
     memset(m, 0, 16 * sizeof(float));

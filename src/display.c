@@ -30,6 +30,7 @@ int16_t screen_height = 480;
 int16_t hires_width = 640;
 int16_t hires_height = 480;
 int16_t screen_centre_x = 320;
+int16_t view_width = 640;
 int16_t screen_centre_y = 240;
 int16_t left_edge = 0;
 int16_t right_edge = 640;
@@ -1083,7 +1084,7 @@ void perspective_transform(vector_t *point) {
 
     int32_t coeff_x = zoom_factor / point->Z;
     int32_t coeff_y = coeff_x - (coeff_x >> 3);  /* 7/8 */
-    coeff_x = coeff_x * screen_width / 320;
+    coeff_x = coeff_x * view_width / 320;
     coeff_y = coeff_y * screen_height / 200;
 
     int32_t persp_x = (coeff_x * (int32_t)point->X) >> 10;
@@ -1125,7 +1126,7 @@ void long_perspective_transform(long_vector_t *point) {
 
     int32_t coeff_x = zoom_factor / point->l_Z;
     int32_t coeff_y = coeff_x - (coeff_x >> 3);  /* 7/8 */
-    coeff_x = coeff_x * screen_width / 320;
+    coeff_x = coeff_x * view_width / 320;
     coeff_y = coeff_y * screen_height / 200;
 
     point->l_X = (coeff_x * point->l_X) >> 10;
@@ -1138,7 +1139,7 @@ void perspec_trans_no_overflow_chk(vector_t *point) {
 
     int32_t coeff_x = zoom_factor / point->Z;
     int32_t coeff_y = coeff_x - (coeff_x >> 3);  /* 7/8 */
-    coeff_x = coeff_x * screen_width / 320;
+    coeff_x = coeff_x * view_width / 320;
     coeff_y = coeff_y * screen_height / 200;
 
     point->X = (int16_t)((coeff_x * (int32_t)point->X) >> 10);

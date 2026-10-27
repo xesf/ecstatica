@@ -53,7 +53,7 @@ void shade_ellipse_rows(part_t *part, int plane, subarea_t *dirty, int top_edge,
 
     /* Compute projected half-sizes in pixels */
     int projection = (zoom_factor >> 4) / part->vector_persp.Z;
-    int half_x = (int)((int64_t)part->projected_axes.X * projection * screen_width / 320 >> 6);
+    int half_x = (int)((int64_t)part->projected_axes.X * projection * view_width / 320 >> 6);
     /* Both modes take 7/8 of the projection vertically; only SVGA adds the
      * 12/5 aspect term (0x429AA1-0x429AC4 VGA, 0x42A15F-0x42A179 win95). */
     int projection78 = projection - projection / 8;
