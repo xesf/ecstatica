@@ -503,6 +503,7 @@ void load_logo(const char *file_name) {
 void load_def_palette(void) {
     FILE *f = fopen_ci("PALLETTE.RAW", "rb");
     if (!f) f = fopen_ci("TITLE_S.RAW", "rb");
+    if (!f) f = fopen_ci("TSCREEN.RAW", "rb");
     if (!f) return;
 
     char header[32];
