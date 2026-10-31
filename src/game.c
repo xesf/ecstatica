@@ -4407,7 +4407,7 @@ int check_scene_ok_to_start(scene_t *scene) {
     return blocked ? 0 : 1;
 }
 
-static remove_cycles_scene()
+static void remove_cycles_scene()
 {
     scene_t *slow = root_scene;
     scene_t *fast = root_scene;
