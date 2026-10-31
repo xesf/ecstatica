@@ -4407,12 +4407,37 @@ int check_scene_ok_to_start(scene_t *scene) {
     return blocked ? 0 : 1;
 }
 
+static remove_cycles_scene()
+{
+    scene_t *slow = root_scene;
+    scene_t *fast = root_scene;
+    while (fast && fast->next_scene) {
+        slow = slow->next_scene;
+        fast = fast->next_scene->next_scene;
+        if (slow == fast) {
+            scene_t *entry = root_scene;
+            while (entry != slow) {
+                entry = entry->next_scene;
+                slow = slow->next_scene;
+            }
+            scene_t *tail = entry;
+            while (tail->next_scene != entry)
+                tail = tail->next_scene;
+            tail->next_scene = NULL;
+            DBG_LOG(1, "[SS] active scene list cycle detected and removed\n");
+            break;
+        }
+    }
+}
+
 /* game_start_scene  E1: 0x446CC8 | E2: 0x452290 */
 void start_scene(scene_t *scene) {
     if (!scene) return;
 
     scene_name_flags[scene->scene_index] |= 2;
     scene_name_flags[scene->scene_index] &= ~4;
+
+    remove_cycles_scene();
 
     scene_t *cur;
     for (cur = root_scene; cur && cur != scene; cur = cur->next_scene) {}
